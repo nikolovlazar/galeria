@@ -21,12 +21,19 @@ tauri-plugin-opener = "2.7"
 tauri-plugin-autostart = "2.7"
 tauri-plugin-single-instance = "2.5"
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-tokio = { version = "1", features = ["time", "sync", "macros"] }
+# preserve_order: manifest.json is rewritten in place when paintings are downloaded,
+# so key order must survive a round trip.
+serde_json = { version = "1", features = ["preserve_order"] }
+tokio = { version = "1", features = ["time", "sync", "macros", "rt"] }
 notify = "8"
 notify-debouncer-full = "0.5"
 # Native TLS: Security.framework on macOS, SChannel on Windows, OpenSSL on Linux.
-reqwest = { version = "0.12", default-features = false, features = ["json", "native-tls", "charset"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "native-tls", "charset", "gzip"] }
+# Museum catalogues: NGA publishes open data as CSV, the Rijksmuseum as EDM/XML.
+csv = "1"
+roxmltree = "0.20"
+# Transliterates titles (Cyrillic, Greek, diacritics) into safe file names.
+deunicode = "1"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp", "tiff"] }
 fast_image_resize = { version = "6", features = ["image"] }
 imagesize = "0.15"
@@ -46,6 +53,7 @@ windows = { version = "0.61", features = [
   "Win32_Foundation",
   "Win32_Graphics_Gdi",
   "Win32_System_Com",
+  "Win32_System_Registry",
   "Win32_UI_Shell",
   "Win32_UI_WindowsAndMessaging",
 ] }

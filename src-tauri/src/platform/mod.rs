@@ -41,7 +41,10 @@ pub const PLATFORM: &str = if cfg!(target_os = "macos") {
 
 /// Run `f` on the main thread and wait for its result. Never call this while
 /// holding the core lock.
-pub fn on_main<T: Send + 'static>(app: &tauri::AppHandle, f: impl FnOnce() -> T + Send + 'static) -> Option<T> {
+pub fn on_main<T: Send + 'static>(
+    app: &tauri::AppHandle,
+    f: impl FnOnce() -> T + Send + 'static,
+) -> Option<T> {
     if is_main_thread() {
         return Some(f());
     }

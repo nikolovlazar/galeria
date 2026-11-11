@@ -19,6 +19,98 @@ pub struct Settings {
     /// Painting ids that should never be shown.
     pub excluded: Vec<String>,
     pub favorites: Vec<String>,
+    pub sources: SourcesSettings,
+    /// User-made groups of paintings ("Favorites" is built in and lives in `favorites`).
+    pub playlists: Vec<Playlist>,
+    pub appearance: AppearanceSettings,
+    pub download: DownloadSettings,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct SourcesSettings {
+    /// Museums (as named in the manifest) whose paintings are left out of the rotation.
+    pub disabled_museums: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct Playlist {
+    pub id: String,
+    pub name: String,
+    pub items: Vec<String>,
+}
+
+/// Which paintings take part in the rotation.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum ScopeKind {
+    #[default]
+    All,
+    Favorites,
+    Playlist,
+    /// Chosen museums and/or genres.
+    Filter,
+    /// An ad-hoc set picked in Browse.
+    Selection,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct Scope {
+    pub kind: ScopeKind,
+    pub playlist: Option<String>,
+    /// Empty = any museum.
+    pub museums: Vec<String>,
+    /// Genre ids; empty = any genre.
+    pub genres: Vec<String>,
+    pub selection: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct AppearanceSettings {
+    /// Light paintings in the system's light appearance, dark paintings in dark.
+    pub match_system: bool,
+    /// Brightness (0–255) from which a painting counts as light. `None` = the
+    /// library's median, so each appearance gets about half.
+    pub threshold: Option<f64>,
+    /// Manual light/dark/both choices per painting id.
+    pub overrides: HashMap<String, crate::tone::ToneOverride>,
+    /// Change the painting right away when the appearance flips.
+    pub switch_immediately: bool,
+}
+
+impl Default for AppearanceSettings {
+    fn default() -> Self {
+        Self {
+            match_system: false,
+            threshold: None,
+            overrides: HashMap::new(),
+            switch_immediately: true,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct DownloadSettings {
+    /// Larger originals are scaled down to this long edge when saved.
+    pub max_long_edge: u32,
+    /// Discover: only offer landscape-format works.
+    pub landscape_only: bool,
+    /// Discover: hide images whose long edge is smaller than this.
+    pub min_long_edge: u32,
+}
+
+impl Default for DownloadSettings {
+    fn default() -> Self {
+        Self {
+            max_long_edge: 8000,
+            landscape_only: true,
+            min_long_edge: 3000,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -125,6 +217,7 @@ pub struct RotationSettings {
     pub interval_minutes: u32,
     pub order: Order,
     pub paused: bool,
+    pub scope: Scope,
 }
 
 impl Default for RotationSettings {
@@ -133,6 +226,7 @@ impl Default for RotationSettings {
             interval_minutes: 30,
             order: Order::Shuffle,
             paused: false,
+            scope: Scope::default(),
         }
     }
 }
@@ -326,12 +420,47 @@ impl Settings {
         self.excluded.dedup();
         self.favorites.sort();
         self.favorites.dedup();
+        self.sources.disabled_museums.sort();
+        self.sources.disabled_museums.dedup();
+        if let Some(t) = self.appearance.threshold {
+            self.appearance.threshold = t.is_finite().then_some(t.clamp(1.0, 254.0));
+        }
+        self.download.max_long_edge = self.download.max_long_edge.clamp(2000, 16000);
+        self.download.min_long_edge = self.download.min_long_edge.min(12000);
+        // Playlists need a unique id and a name; items keep their order, without repeats.
+        let mut seen = std::collections::HashSet::new();
+        self.playlists.retain_mut(|p| {
+            p.name = p.name.trim().to_string();
+            if p.id.trim().is_empty() {
+                p.id = format!("pl-{:08x}", fastrand::u32(..));
+            }
+            let mut items = std::collections::HashSet::new();
+            p.items.retain(|i| items.insert(i.clone()));
+            !p.name.is_empty() && seen.insert(p.id.clone())
+        });
+        let scope = &mut self.rotation.scope;
+        if scope.kind == ScopeKind::Playlist
+            && !scope
+                .playlist
+                .as_ref()
+                .is_some_and(|id| self.playlists.iter().any(|p| &p.id == id))
+        {
+            scope.kind = ScopeKind::All;
+            scope.playlist = None;
+        }
     }
 
     /// Apply a JSON merge patch (RFC 7396-ish: objects merge, everything else replaces).
     pub fn patched(&self, patch: &Value) -> Result<Settings, String> {
         let mut base = serde_json::to_value(self).map_err(|e| e.to_string())?;
         merge(&mut base, patch);
+        // In keyed maps, patching a key to `null` removes it.
+        for path in [["plate", "positions"], ["appearance", "overrides"]] {
+            if let Some(Value::Object(map)) = base.get_mut(path[0]).and_then(|v| v.get_mut(path[1]))
+            {
+                map.retain(|_, v| !v.is_null());
+            }
+        }
         let mut next: Settings = serde_json::from_value(base).map_err(|e| e.to_string())?;
         next.normalize();
         Ok(next)
@@ -339,8 +468,16 @@ impl Settings {
 }
 
 fn clamp_pos(p: &mut PlatePosition) {
-    p.x = if p.x.is_finite() { p.x.clamp(0.0, 1.0) } else { 1.0 };
-    p.y = if p.y.is_finite() { p.y.clamp(0.0, 1.0) } else { 1.0 };
+    p.x = if p.x.is_finite() {
+        p.x.clamp(0.0, 1.0)
+    } else {
+        1.0
+    };
+    p.y = if p.y.is_finite() {
+        p.y.clamp(0.0, 1.0)
+    } else {
+        1.0
+    };
 }
 
 pub fn is_hex_color(s: &str) -> bool {
@@ -390,25 +527,57 @@ mod tests {
     fn patch_merges_nested_objects() {
         let s = Settings::default();
         let next = s
-            .patched(&serde_json::json!({ "plate": { "style": "glass", "fields": { "qr": true } } }))
+            .patched(
+                &serde_json::json!({ "plate": { "style": "glass", "fields": { "qr": true } } }),
+            )
             .unwrap();
         assert_eq!(next.plate.style, "glass");
         assert!(next.plate.fields.qr);
-        assert!(next.plate.fields.artist, "untouched fields keep their value");
+        assert!(
+            next.plate.fields.artist,
+            "untouched fields keep their value"
+        );
         assert_eq!(next.wallpaper, s.wallpaper);
     }
 
     #[test]
     fn unknown_and_missing_fields_are_tolerated() {
-        let s: Settings = serde_json::from_str(r#"{"plate":{"style":"brass"},"fromTheFuture":1}"#).unwrap();
+        let s: Settings =
+            serde_json::from_str(r#"{"plate":{"style":"brass"},"fromTheFuture":1}"#).unwrap();
         assert_eq!(s.plate.style, "brass");
         assert_eq!(s.rotation.interval_minutes, 30);
     }
 
     #[test]
+    fn keyed_maps_and_playlists() {
+        let s = Settings::default()
+            .patched(&serde_json::json!({
+                "appearance": { "matchSystem": true, "overrides": { "a": "light", "b": "both" } },
+                "playlists": [{ "id": "", "name": " Evening ", "items": ["x", "y", "x"] }, { "id": "p2", "name": "" }],
+            }))
+            .unwrap();
+        assert!(s.appearance.match_system);
+        assert_eq!(s.appearance.overrides.len(), 2);
+        assert_eq!(s.playlists.len(), 1, "nameless playlists are dropped");
+        assert_eq!(s.playlists[0].name, "Evening");
+        assert!(s.playlists[0].id.starts_with("pl-"));
+        assert_eq!(s.playlists[0].items, vec!["x", "y"]);
+        let s2 = s
+            .patched(&serde_json::json!({ "appearance": { "overrides": { "a": null } } }))
+            .unwrap();
+        assert_eq!(s2.appearance.overrides.len(), 1);
+        assert!(s2.appearance.overrides.contains_key("b"));
+        // A scope pointing at a playlist that no longer exists falls back to everything.
+        let s3 = s2.patched(&serde_json::json!({ "rotation": { "scope": { "kind": "playlist", "playlist": "gone" } } })).unwrap();
+        assert_eq!(s3.rotation.scope.kind, ScopeKind::All);
+    }
+
+    #[test]
     fn normalize_clamps() {
         let s = Settings::default()
-            .patched(&serde_json::json!({ "wallpaper": { "panSpeed": 10000.0, "matteColor": "red" } }))
+            .patched(
+                &serde_json::json!({ "wallpaper": { "panSpeed": 10000.0, "matteColor": "red" } }),
+            )
             .unwrap();
         assert_eq!(s.wallpaper.pan_speed, 200.0);
         assert_eq!(s.wallpaper.matte_color, "#1d1c1a");

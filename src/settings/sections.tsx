@@ -1,11 +1,26 @@
 import { useMemo, useState } from "react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { api, imageUrl } from "../shared/api";
-import type { Display, FitMode, FrameStyle, Matte, Painting, Snapshot } from "../shared/types";
+import type { Display, FitMode, FrameStyle, Matte, Painting, Playlist, ScopeKind, Snapshot, ToneOverride } from "../shared/types";
 import { PlatePreview } from "./PlatePreview";
 import { Button, Row, Section, Segmented, Select, Slider, Toggle, bytes, timeUntil, useLibrary } from "./ui";
 
 type P = { snap: Snapshot };
+
+// ---------------------------------------------------------------------------
+// Playlists & per-painting choices (all stored in settings)
+
+const savePlaylists = (playlists: Playlist[]) => api.patch({ playlists });
+const addToPlaylist = (snap: Snapshot, id: string, ids: string[]) =>
+  savePlaylists(snap.settings.playlists.map((p) => (p.id === id ? { ...p, items: [...new Set([...p.items, ...ids])] } : p)));
+const removeFromPlaylist = (snap: Snapshot, id: string, ids: string[]) =>
+  savePlaylists(snap.settings.playlists.map((p) => (p.id === id ? { ...p, items: p.items.filter((i) => !ids.includes(i)) } : p)));
+const createPlaylist = (snap: Snapshot, name: string, ids: string[] = []) =>
+  savePlaylists([...snap.settings.playlists, { id: `pl-${Date.now().toString(36)}`, name: name.trim(), items: ids }]);
+/** `null` clears the manual choice, so brightness decides again. */
+const setTone = (ids: string[], value: ToneOverride | null) =>
+  api.patch({ appearance: { overrides: Object.fromEntries(ids.map((id) => [id, value])) } });
+const genreName = (snap: Snapshot, id: string) => snap.genres.find((g) => g.id === id)?.name ?? id;
 
 // ---------------------------------------------------------------------------
 // Now showing
@@ -76,7 +91,9 @@ function PaintingDetails({ p, snap, displayKey, compact }: { p: Painting; snap: 
     ["Accession", p.accession],
     ["Image credit", p.credit],
     ["License", p.license],
+    ["Genres", p.genres.map((g) => genreName(snap, g)).join(", ")],
     ["Scan", `${p.width}×${p.height} px · ${(p.width * p.height / 1e6).toFixed(1)} MP · ${bytes(p.bytes)}`],
+    ["Brightness", p.brightness != null ? `${Math.round(p.brightness)} of 255${p.tone ? ` · counts as ${p.tone}` : " · shown in light and dark"}` : "Not measured yet"],
     ["File", p.file],
   ];
   return (
@@ -103,6 +120,36 @@ function PaintingDetails({ p, snap, displayKey, compact }: { p: Painting; snap: 
         <p className="description">
           <strong>Did you know?</strong> {p.didYouKnow}
         </p>
+      )}
+      {!p.museumEnabled && <p className="notice">Its museum is switched off in Museums, so it is left out of the rotation.</p>}
+      <div className="choice-row">
+        <span className="muted small">Light & Dark</span>
+        <Segmented<string>
+          value={p.toneOverride ?? "auto"}
+          onChange={(v) => void setTone([p.id], v === "auto" ? null : (v as ToneOverride))}
+          options={[
+            { value: "auto", label: "Auto" },
+            { value: "light", label: "Light" },
+            { value: "dark", label: "Dark" },
+            { value: "both", label: "Both" },
+          ]}
+        />
+      </div>
+      {snap.settings.playlists.length > 0 && (
+        <div className="choice-row">
+          <span className="muted small">Playlists</span>
+          <div className="chips">
+            {snap.settings.playlists.map((pl) => {
+              const on = pl.items.includes(p.id);
+              return (
+                <button key={pl.id} type="button" className={on ? "active" : ""} onClick={() => void (on ? removeFromPlaylist(snap, pl.id, [p.id]) : addToPlaylist(snap, pl.id, [p.id]))}>
+                  {on ? "✓ " : "+ "}
+                  {pl.name}
+                </button>
+              );
+            })}
+          </div>
+        </div>
       )}
       <div className="actions">
         {displayKey === undefined && (
@@ -136,39 +183,58 @@ function PaintingDetails({ p, snap, displayKey, compact }: { p: Painting; snap: 
 // ---------------------------------------------------------------------------
 // Browse
 
-type Filter = "all" | "favorites" | "excluded" | "landscape" | "portrait" | "panorama";
+type Filter = "all" | "rotation" | "favorites" | "excluded" | "landscape" | "portrait" | "panorama" | "light" | "dark";
 
 export function Browse({ snap }: P) {
   const lib = useLibrary(snap);
   const [q, setQ] = useState("");
   const [filter, setFilter] = useState<Filter>("all");
   const [museum, setMuseum] = useState("");
-  const [sort, setSort] = useState<"manifest" | "title" | "artist">("manifest");
+  const [genre, setGenre] = useState("");
+  const [playlist, setPlaylist] = useState("");
+  const [sort, setSort] = useState<"manifest" | "title" | "artist" | "brightness">("manifest");
   const [selected, setSelected] = useState<string | null>(null);
+  // Picking several paintings at once (for a playlist, a one-off rotation, light/dark…).
+  const [picking, setPicking] = useState(false);
+  const [picked, setPicked] = useState<Set<string>>(new Set());
+  const [newName, setNewName] = useState<string | null>(null);
   const showing = new Set(snap.displays.map((d) => d.painting?.id));
 
   const museums = useMemo(() => [...new Set((lib?.paintings ?? []).map((p) => p.museum).filter(Boolean) as string[])].sort(), [lib]);
   const list = useMemo(() => {
     const needle = q.trim().toLowerCase();
+    const inList = playlist ? new Set(snap.settings.playlists.find((pl) => pl.id === playlist)?.items ?? []) : null;
     let ps = (lib?.paintings ?? []).filter((p) => {
       if (museum && p.museum !== museum) return false;
+      if (genre && !(genre === "other" ? p.genres.length === 0 : p.genres.includes(genre))) return false;
+      if (inList && !inList.has(p.id)) return false;
+      if (filter === "rotation" && !p.inRotation) return false;
       if (filter === "favorites" && !p.favorite) return false;
       if (filter === "excluded" && !p.excluded) return false;
       if (filter === "landscape" && p.orientation !== "landscape") return false;
       if (filter === "portrait" && p.orientation !== "portrait") return false;
       if (filter === "panorama" && !(p.aspect > 2 || p.aspect < 0.5)) return false;
+      if (filter === "light" && p.tone !== "light") return false;
+      if (filter === "dark" && p.tone !== "dark") return false;
       if (!needle) return true;
       return [p.title, p.originalTitle, p.artist, p.date, p.museum, p.medium, ...p.tags].some((v) => v?.toLowerCase().includes(needle));
     });
     if (sort === "title") ps = [...ps].sort((a, b) => a.title.localeCompare(b.title));
     if (sort === "artist") ps = [...ps].sort((a, b) => (a.artist ?? "~").localeCompare(b.artist ?? "~"));
+    if (sort === "brightness") ps = [...ps].sort((a, b) => (a.brightness ?? 999) - (b.brightness ?? 999));
     return ps;
-  }, [lib, q, filter, museum, sort]);
+  }, [lib, q, filter, museum, genre, playlist, sort, snap.settings.playlists]);
   const sel = lib?.paintings.find((p) => p.id === selected) ?? null;
+  const ids = [...picked];
+  const done = () => {
+    setPicking(false);
+    setPicked(new Set());
+    setNewName(null);
+  };
 
   if (!lib) return <div className="muted pad">Loading library…</div>;
   return (
-    <div className={`browse${sel ? " with-detail" : ""}`}>
+    <div className={`browse${sel && !picking ? " with-detail" : ""}`}>
       <div className="browse-main">
         <div className="toolbar">
           <input className="search" placeholder={`Search ${lib.paintings.length} paintings…`} value={q} onChange={(e) => setQ(e.target.value)} autoFocus />
@@ -177,14 +243,21 @@ export function Browse({ snap }: P) {
             onChange={setFilter}
             options={[
               { value: "all", label: "All" },
+              { value: "rotation", label: "In rotation" },
               { value: "favorites", label: "Favorites" },
               { value: "excluded", label: "Hidden" },
+              { value: "light", label: "Light" },
+              { value: "dark", label: "Dark" },
               { value: "landscape", label: "Landscape" },
               { value: "portrait", label: "Portrait" },
               { value: "panorama", label: "Panoramas (pan)" },
             ]}
           />
+          <Select value={genre} onChange={setGenre} options={[{ value: "", label: "All genres" }, ...snap.genres.map((g) => ({ value: g.id, label: `${g.name} (${g.count})` }))]} />
           <Select value={museum} onChange={setMuseum} options={[{ value: "", label: "All museums" }, ...museums.map((m) => ({ value: m, label: m }))]} />
+          {snap.settings.playlists.length > 0 && (
+            <Select value={playlist} onChange={setPlaylist} options={[{ value: "", label: "All playlists" }, ...snap.settings.playlists.map((pl) => ({ value: pl.id, label: pl.name }))]} />
+          )}
           <Select
             value={sort}
             onChange={setSort}
@@ -192,17 +265,106 @@ export function Browse({ snap }: P) {
               { value: "manifest", label: "Manifest order" },
               { value: "title", label: "Title" },
               { value: "artist", label: "Artist" },
+              { value: "brightness", label: "Dark to light" },
             ]}
           />
           <span className="muted count">{list.length}</span>
+          <Button kind={picking ? "primary" : undefined} onClick={() => (picking ? done() : setPicking(true))}>
+            <span data-test="browse-select">{picking ? "Done" : "Select"}</span>
+          </Button>
         </div>
+        {picking && (
+          <div className="action-bar top" data-test="browse-bulk">
+            <span className="muted">{ids.length} selected</span>
+            <Button kind="ghost" onClick={() => setPicked(new Set(list.map((p) => p.id)))}>
+              All {list.length}
+            </Button>
+            <Button kind="ghost" onClick={() => setPicked(new Set())} disabled={!ids.length}>
+              None
+            </Button>
+            <span className="spacer" />
+            <Button
+              kind="primary"
+              disabled={!ids.length}
+              title="Rotate through just these paintings"
+              onClick={() => {
+                void api.patch({ rotation: { scope: { kind: "selection", selection: ids } } });
+                done();
+              }}
+            >
+              <span data-test="browse-show-only">Show Only These</span>
+            </Button>
+            {newName === null ? (
+              <Select
+                value=""
+                onChange={(v) => {
+                  if (v === "+") setNewName("");
+                  else if (v) void addToPlaylist(snap, v, ids);
+                }}
+                options={[
+                  { value: "", label: "Add to playlist…" },
+                  ...snap.settings.playlists.map((pl) => ({ value: pl.id, label: pl.name })),
+                  { value: "+", label: "New playlist…" },
+                ]}
+              />
+            ) : (
+              <span className="inline">
+                <input className="text" data-test="playlist-name" placeholder="Playlist name" value={newName} autoFocus onChange={(e) => setNewName(e.target.value)} />
+                <Button
+                  disabled={!newName.trim() || !ids.length}
+                  onClick={() => {
+                    void createPlaylist(snap, newName, ids);
+                    setNewName(null);
+                  }}
+                >
+                  <span data-test="playlist-create">Create</span>
+                </Button>
+              </span>
+            )}
+            <Button disabled={!ids.length} onClick={() => void api.patch({ favorites: [...new Set([...snap.settings.favorites, ...ids])] })}>
+              ★ Favorite
+            </Button>
+            <Select
+              value=""
+              onChange={(v) => v && void setTone(ids, v === "auto" ? null : (v as ToneOverride))}
+              options={[
+                { value: "", label: "Light / dark…" },
+                { value: "light", label: "Treat as light" },
+                { value: "dark", label: "Treat as dark" },
+                { value: "both", label: "Fine in both" },
+                { value: "auto", label: "Decide by brightness" },
+              ]}
+            />
+            <Button kind="danger" disabled={!ids.length} onClick={() => void api.patch({ excluded: [...new Set([...snap.settings.excluded, ...ids])] })}>
+              Never Show
+            </Button>
+          </div>
+        )}
         <div className="grid">
           {list.map((p) => (
-            <button key={p.id} type="button" className={`tile${p.excluded ? " excluded" : ""}${selected === p.id ? " selected" : ""}`} onClick={() => setSelected(p.id === selected ? null : p.id)} onDoubleClick={() => void api.openViewer(p.id)}>
+            <button
+              key={p.id}
+              type="button"
+              data-test="tile"
+              data-id={p.id}
+              className={`tile${p.excluded || !p.museumEnabled ? " excluded" : ""}${selected === p.id && !picking ? " selected" : ""}${picked.has(p.id) ? " picked" : ""}`}
+              onClick={() => {
+                if (!picking) return setSelected(p.id === selected ? null : p.id);
+                setPicked((prev) => {
+                  const next = new Set(prev);
+                  if (next.has(p.id)) next.delete(p.id);
+                  else next.add(p.id);
+                  return next;
+                });
+              }}
+              onDoubleClick={() => !picking && void api.openViewer(p.id)}
+            >
               <div className="tile-img">
                 <img src={imageUrl.thumb(p.id)} loading="lazy" decoding="async" alt="" />
                 {showing.has(p.id) && <span className="badge">On desktop</span>}
                 {p.favorite && <span className="star">★</span>}
+                {picking && <span className={`tick${picked.has(p.id) ? " on" : ""}`}>{picked.has(p.id) ? "✓" : ""}</span>}
+                {p.tone && <span className={`tone ${p.tone}`} title={`Counts as ${p.tone}${p.toneOverride ? " (your choice)" : ""}`} />}
               </div>
               <div className="tile-title">{p.title}</div>
               <div className="tile-sub">{[p.artist, p.date].filter(Boolean).join(", ")}</div>
@@ -210,7 +372,7 @@ export function Browse({ snap }: P) {
           ))}
         </div>
       </div>
-      {sel && (
+      {sel && !picking && (
         <aside className="detail">
           <button type="button" className="close" onClick={() => setSelected(null)}>
             ×
@@ -357,45 +519,223 @@ export function Wallpaper({ snap }: P) {
 // ---------------------------------------------------------------------------
 // Rotation
 
-export function Rotation({ snap }: P) {
+export function Rotation({ snap, go }: P & { go: (tab: string) => void }) {
   const r = snap.settings.rotation;
+  const sc = r.scope;
+  const ap = snap.settings.appearance;
   const set = (patch: Partial<typeof r>) => void api.patch({ rotation: patch });
+  const setScope = (patch: Partial<typeof sc>) => void api.patch({ rotation: { scope: patch } });
+  const setAp = (patch: Partial<typeof ap>) => void api.patch({ appearance: patch });
+  const [name, setName] = useState("");
+  const toggleIn = (list: string[], v: string) => (list.includes(v) ? list.filter((x) => x !== v) : [...list, v]);
+  const theme = snap.theme === "dark" ? "Dark Mode" : snap.theme === "light" ? "Light Mode" : null;
   return (
-    <Section title="Rotation" description="When and in what order paintings change.">
-      <Row label="Change painting">
-        <Select
-          value={r.intervalMinutes}
-          onChange={(v) => set({ intervalMinutes: v })}
-          options={[
-            { value: 0, label: "Never" },
-            { value: 1, label: "Every minute" },
-            { value: 5, label: "Every 5 minutes" },
-            { value: 15, label: "Every 15 minutes" },
-            { value: 30, label: "Every 30 minutes" },
-            { value: 60, label: "Every hour" },
-            { value: 180, label: "Every 3 hours" },
-            { value: 720, label: "Every 12 hours" },
-            { value: 1440, label: "Every day" },
-          ]}
-        />
-      </Row>
-      <Row label="Order" hint="Shuffle goes through the whole library before repeating.">
-        <Segmented
-          value={r.order}
-          onChange={(v) => set({ order: v })}
-          options={[
-            { value: "shuffle", label: "Shuffle" },
-            { value: "sequential", label: "Manifest order" },
-          ]}
-        />
-      </Row>
-      <Row label="Pause rotation">
-        <Toggle checked={r.paused} onChange={(v) => set({ paused: v })} />
-      </Row>
-      <Row label="Change now">
-        <Button onClick={() => void api.next()}>Next Painting</Button>
-      </Row>
-    </Section>
+    <>
+      <Section
+        title="What to Show"
+        description={
+          snap.rotation.empty
+            ? "Nothing matches this choice, so every painting is shown for now."
+            : `${snap.rotation.count} ${snap.rotation.count === 1 ? "painting takes" : "paintings take"} part${ap.matchSystem && theme ? `, ${snap.rotation.matching} of them suited to ${theme}` : ""}.`
+        }
+      >
+        <Row label="Paintings" hint="Hidden paintings and museums that are switched off never appear, whatever you choose here.">
+          <Select<ScopeKind>
+            value={sc.kind}
+            onChange={(kind) => setScope({ kind, ...(kind === "playlist" && !sc.playlist ? { playlist: snap.settings.playlists[0]?.id ?? null } : {}) })}
+            options={[
+              { value: "all", label: `Everything (${snap.library.valid})` },
+              { value: "favorites", label: `Favorites (${snap.settings.favorites.length})` },
+              ...(snap.settings.playlists.length ? [{ value: "playlist" as ScopeKind, label: "A playlist" }] : []),
+              { value: "filter", label: "Chosen museums and genres" },
+              ...(sc.selection.length ? [{ value: "selection" as ScopeKind, label: `My selection (${sc.selection.length})` }] : []),
+            ]}
+          />
+        </Row>
+        {sc.kind === "playlist" && (
+          <Row label="Playlist">
+            <Select value={sc.playlist ?? ""} onChange={(v) => setScope({ playlist: v })} options={snap.settings.playlists.map((pl) => ({ value: pl.id, label: `${pl.name} (${pl.items.length})` }))} />
+          </Row>
+        )}
+        {sc.kind === "filter" && (
+          <div className="pad filter-picker">
+            <div className="muted small">Genres {sc.genres.length === 0 && "(any)"}</div>
+            <div className="chips" data-test="scope-genres">
+              {snap.genres.map((g) => (
+                <button key={g.id} type="button" data-genre={g.id} className={sc.genres.includes(g.id) ? "active" : ""} onClick={() => setScope({ genres: toggleIn(sc.genres, g.id) })}>
+                  {g.name} <span className="n">{g.count}</span>
+                </button>
+              ))}
+            </div>
+            <div className="muted small">Museums {sc.museums.length === 0 && "(any)"}</div>
+            <div className="chips" data-test="scope-museums">
+              {snap.museums
+                .filter((m) => m.enabled)
+                .map((m) => (
+                  <button key={m.name} type="button" className={sc.museums.includes(m.name) ? "active" : ""} onClick={() => setScope({ museums: toggleIn(sc.museums, m.name) })}>
+                    {m.name} <span className="n">{m.count}</span>
+                  </button>
+                ))}
+            </div>
+          </div>
+        )}
+        {sc.kind === "selection" && (
+          <Row label={`${sc.selection.length} paintings you picked`} hint="Pick a different set in Browse: Select, then Show Only These.">
+            <Button onClick={() => go("browse")}>Open Browse</Button>
+          </Row>
+        )}
+        {sc.kind === "favorites" && snap.settings.favorites.length === 0 && (
+          <Row label="No favorites yet" hint="Star paintings in Browse or from the menu bar.">
+            <Button onClick={() => go("browse")}>Open Browse</Button>
+          </Row>
+        )}
+      </Section>
+
+      <Section title="Playlists" description="Named sets of paintings. Fill them in Browse: Select, then Add to Playlist.">
+        {snap.settings.playlists.map((pl) => (
+          <Row
+            key={pl.id}
+            label={
+              <input
+                className="text name-input"
+                defaultValue={pl.name}
+                onBlur={(e) => {
+                  const v = e.target.value.trim();
+                  if (v && v !== pl.name) void savePlaylists(snap.settings.playlists.map((x) => (x.id === pl.id ? { ...x, name: v } : x)));
+                  else e.target.value = pl.name;
+                }}
+              />
+            }
+            hint={`${pl.items.length} ${pl.items.length === 1 ? "painting" : "paintings"}`}
+          >
+            <div className="inline">
+              <Button kind={sc.kind === "playlist" && sc.playlist === pl.id ? "primary" : undefined} onClick={() => setScope({ kind: "playlist", playlist: pl.id })} disabled={!pl.items.length}>
+                {sc.kind === "playlist" && sc.playlist === pl.id ? "Showing" : "Show"}
+              </Button>
+              <Button kind="danger" onClick={() => void savePlaylists(snap.settings.playlists.filter((x) => x.id !== pl.id))}>
+                Delete
+              </Button>
+            </div>
+          </Row>
+        ))}
+        <Row label={<input className="text name-input" data-test="new-playlist" placeholder="New playlist name" value={name} onChange={(e) => setName(e.target.value)} />}>
+          <Button
+            disabled={!name.trim()}
+            onClick={() => {
+              void createPlaylist(snap, name);
+              setName("");
+            }}
+          >
+            <span data-test="new-playlist-add">Add Playlist</span>
+          </Button>
+        </Row>
+      </Section>
+
+      <Section title="Light & Dark" description="Galeria measures how bright each painting is and can follow your system's appearance.">
+        <Row label="Match the system appearance" hint={`Brighter paintings in Light Mode, darker ones in Dark Mode.${theme ? ` Your system is in ${theme} now.` : ""}`}>
+          <Toggle checked={ap.matchSystem} onChange={(v) => setAp({ matchSystem: v })} />
+        </Row>
+        <ToneChart snap={snap} />
+        <Row
+          label="Dividing line"
+          hint={
+            ap.threshold == null
+              ? `Automatic: the middle of your library (${Math.round(snap.tone.autoThreshold)} of 255), so light and dark each get about half.`
+              : "Paintings at or above this brightness count as light."
+          }
+        >
+          <div className="inline">
+            <Segmented<string>
+              value={ap.threshold == null ? "auto" : "custom"}
+              onChange={(v) => setAp({ threshold: v === "auto" ? null : Math.round(snap.tone.threshold) })}
+              options={[
+                { value: "auto", label: "Automatic" },
+                { value: "custom", label: "Custom" },
+              ]}
+            />
+            {ap.threshold != null && <Slider value={ap.threshold} min={30} max={220} step={1} onCommit={(v) => setAp({ threshold: v })} format={(v) => `${v}`} />}
+          </div>
+        </Row>
+        <Row label="Change as soon as the appearance switches" hint="Otherwise the next scheduled change picks a fitting painting.">
+          <Toggle checked={ap.switchImmediately} onChange={(v) => setAp({ switchImmediately: v })} disabled={!ap.matchSystem} />
+        </Row>
+        <p className="muted small pad-x">
+          Disagree with a verdict? Open a painting in Browse and set it to Light, Dark or Both.
+          {Object.keys(ap.overrides).length > 0 && ` You have set ${Object.keys(ap.overrides).length} by hand.`}
+        </p>
+      </Section>
+
+      <Section title="Timing" description="When and in what order paintings change.">
+        <Row label="Change painting">
+          <Select
+            value={r.intervalMinutes}
+            onChange={(v) => set({ intervalMinutes: v })}
+            options={[
+              { value: 0, label: "Never" },
+              { value: 1, label: "Every minute" },
+              { value: 5, label: "Every 5 minutes" },
+              { value: 15, label: "Every 15 minutes" },
+              { value: 30, label: "Every 30 minutes" },
+              { value: 60, label: "Every hour" },
+              { value: 180, label: "Every 3 hours" },
+              { value: 720, label: "Every 12 hours" },
+              { value: 1440, label: "Every day" },
+            ]}
+          />
+        </Row>
+        <Row label="Order" hint="Shuffle goes through every painting in the rotation before repeating.">
+          <Segmented
+            value={r.order}
+            onChange={(v) => set({ order: v })}
+            options={[
+              { value: "shuffle", label: "Shuffle" },
+              { value: "sequential", label: "Manifest order" },
+            ]}
+          />
+        </Row>
+        <Row label="Pause rotation">
+          <Toggle checked={r.paused} onChange={(v) => set({ paused: v })} />
+        </Row>
+        <Row label="Change now">
+          <Button onClick={() => void api.next()}>Next Painting</Button>
+        </Row>
+      </Section>
+    </>
+  );
+}
+
+/** Brightness of every painting in the library, with the light/dark dividing line. */
+function ToneChart({ snap }: P) {
+  const lib = useLibrary(snap);
+  const BINS = 32;
+  const bins = useMemo(() => {
+    const b = new Array<number>(BINS).fill(0);
+    for (const p of lib?.paintings ?? []) {
+      if (p.brightness != null && !p.excluded && p.museumEnabled) b[Math.min(BINS - 1, Math.floor((p.brightness / 256) * BINS))]++;
+    }
+    return b;
+  }, [lib]);
+  const max = Math.max(1, ...bins);
+  const t = snap.tone;
+  return (
+    <div className="tone-chart" data-test="tone-chart">
+      <div className="tone-bars">
+        {bins.map((n, i) => (
+          <span key={i} className={((i + 0.5) / BINS) * 256 >= t.threshold ? "light" : "dark"} style={{ height: `${(n / max) * 100}%` }} title={`${n} paintings`} />
+        ))}
+        <i style={{ left: `${(t.threshold / 256) * 100}%` }} />
+      </div>
+      <div className="tone-legend">
+        <span>
+          <b className="dot dark" /> {t.dark} dark
+        </span>
+        <span className="muted">dividing line {Math.round(t.threshold)}</span>
+        <span>
+          {t.light} light <b className="dot light" />
+        </span>
+      </div>
+      {t.unknown > 0 && <div className="muted small">{t.unknown} not measured yet. Galeria is working through them.</div>}
+    </div>
   );
 }
 
@@ -596,11 +936,31 @@ export function Library({ snap }: P) {
           <Stat n={l.unindexed} label="files not in manifest" />
           <Stat n={l.excluded} label="hidden by you" />
         </div>
-        <p className="muted small pad-x">The folder is watched: when the manifest changes or files finish downloading, the library updates by itself.</p>
+        <p className="muted small pad-x">
+          The folder is watched: when the manifest changes or files finish downloading, the library updates by itself. Galeria writes to manifest.json only to add a painting you download in Discover (or to remove missing entries when you ask), and keeps a backup each time.
+        </p>
       </Section>
 
       {lib && (lib.missing.length > 0 || lib.invalid.length > 0 || lib.duplicates.length > 0) && (
-        <Section title="Issues">
+        <Section
+          title="Issues"
+          actions={
+            lib.missing.length > 0 ? (
+              <Button
+                title="Removes the entries of deleted files from manifest.json. A backup of the manifest is kept."
+                onClick={async () => {
+                  const n = await api.cleanupManifest().catch((e) => {
+                    setCleared(String(e));
+                    return 0;
+                  });
+                  if (n) setCleared(`Removed ${n} manifest ${n === 1 ? "entry" : "entries"}`);
+                }}
+              >
+                Remove {lib.missing.length} Missing from Manifest
+              </Button>
+            ) : undefined
+          }
+        >
           <ul className="issues">
             {[...lib.missing, ...lib.invalid, ...lib.duplicates].map((i, n) => (
               <li key={n}>
@@ -623,7 +983,7 @@ export function Library({ snap }: P) {
         </Section>
       )}
 
-      <Section title="Museum Information" description="Fills in descriptions, artist nationality & dates, credit lines and English titles from the Cleveland Museum of Art and Rijksmuseum APIs, Wikidata and Wikipedia. Cached locally; your manifest is never modified.">
+      <Section title="Museum Information" description="Fills in descriptions, artist nationality & dates, credit lines and English titles from the Cleveland Museum of Art and Rijksmuseum APIs, Wikidata and Wikipedia. Cached locally, not written to your manifest.">
         <Row label="Look up information online">
           <Toggle checked={snap.settings.general.enrichOnline} onChange={(v) => void api.patch({ general: { enrichOnline: v } })} />
         </Row>

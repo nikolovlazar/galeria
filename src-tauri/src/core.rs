@@ -6,11 +6,14 @@ use crate::displays::{self, DisplayInfo};
 use crate::enrich::{self, Enricher, Enrichment, Job};
 use crate::images::{self, Source};
 use crate::library::{self, DimCache, Issue, Library, Painting};
+use crate::licensing::{self, MuseumPolicy};
 use crate::platform::{self, SystemWallpaperOptions};
-use crate::settings::{self, FitMode, Matte, Order, Settings, WallpaperSettings};
+use crate::settings::{self, FitMode, Matte, Order, ScopeKind, Settings, WallpaperSettings};
+use crate::sources;
 use crate::styles::{self, CustomStyle};
+use crate::tone::{self, Tone, ToneOverride};
 use crate::util::now;
-use crate::{tray, wall};
+use crate::{download, genres, tray, wall};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::collections::{HashMap, HashSet};
@@ -32,13 +35,29 @@ pub struct Paths {
     pub state: PathBuf,
     pub enrichment: PathBuf,
     pub styles: PathBuf,
+    /// Brightness measures Galeria computed for paintings whose manifest has none.
+    pub tones: PathBuf,
+    /// Record of what Galeria downloaded (lets it re-list entries another tool dropped).
+    pub downloads_journal: PathBuf,
+    /// Copies of `manifest.json` from before Galeria changed it.
+    pub manifest_backups: PathBuf,
 }
 
 impl Paths {
     pub fn resolve(app: &AppHandle) -> Result<Paths, String> {
-        let config = app.path().app_config_dir().map_err(|e| e.to_string())?;
-        let data = app.path().app_data_dir().map_err(|e| e.to_string())?;
-        let cache = app.path().app_cache_dir().map_err(|e| e.to_string())?;
+        // `GALERIA_HOME=<dir>` keeps settings, state and caches in one folder of your
+        // choosing (a portable setup, or a sandbox for testing).
+        let (config, data, cache) = match std::env::var_os("GALERIA_HOME")
+            .map(PathBuf::from)
+            .filter(|p| !p.as_os_str().is_empty())
+        {
+            Some(home) => (home.join("config"), home.join("data"), home.join("cache")),
+            None => (
+                app.path().app_config_dir().map_err(|e| e.to_string())?,
+                app.path().app_data_dir().map_err(|e| e.to_string())?,
+                app.path().app_cache_dir().map_err(|e| e.to_string())?,
+            ),
+        };
         for d in [&config, &data, &cache] {
             std::fs::create_dir_all(d).map_err(|e| e.to_string())?;
         }
@@ -47,6 +66,9 @@ impl Paths {
             styles: config.join("plate-styles"),
             state: data.join("state.json"),
             enrichment: data.join("enrichment.json"),
+            tones: data.join("tones.json"),
+            downloads_journal: data.join("downloads.json"),
+            manifest_backups: data.join("manifest-backups"),
             wallpaper_backup: data.join("original-wallpaper-store.plist"),
             config,
             cache,
@@ -95,6 +117,16 @@ pub struct Inner {
     pub bad: HashMap<String, u64>,
     pub styles: Vec<CustomStyle>,
     pub quitting: bool,
+    /// Brightness of paintings whose manifest does not state it.
+    pub tones: tone::Store,
+    tones_dirty: usize,
+    tones_failed: HashSet<String>,
+    /// The library's median brightness: the automatic light/dark dividing line.
+    pub auto_threshold: f64,
+    /// Whether the system is in its dark appearance (`None` until first asked).
+    pub dark: Option<bool>,
+    /// `--debug-theme`: pretend the system is light/dark.
+    pub dark_forced: Option<bool>,
     last_snapshot: String,
     last_tray: String,
 }
@@ -102,6 +134,9 @@ pub struct Inner {
 pub struct Core {
     pub paths: Paths,
     inner: Mutex<Inner>,
+    pub http: sources::Http,
+    pub downloads: download::Queue,
+    pub tone_wake: Notify,
     pub enrich_wake: Notify,
     watchers: Mutex<Vec<Box<dyn std::any::Any + Send>>>,
     colors: Mutex<HashMap<String, Colors>>,
@@ -134,6 +169,8 @@ pub struct PaintingView {
     pub credit_line: Option<String>,
     pub accession: Option<String>,
     pub license: Option<String>,
+    /// The image's license requires naming its author: the plate always shows the credit.
+    pub attribution_required: bool,
     pub source: Option<String>,
     pub source_page: Option<String>,
     pub wikipedia_url: Option<String>,
@@ -147,7 +184,67 @@ pub struct PaintingView {
     pub excluded: bool,
     pub favorite: bool,
     pub enriched: bool,
+    /// Genre ids.
+    pub genres: Vec<String>,
+    /// Mean luma 0–255 (from the manifest, or measured by Galeria).
+    pub brightness: Option<f64>,
+    /// Light or dark, after the threshold and any manual choice.
+    pub tone: Option<Tone>,
+    pub tone_override: Option<ToneOverride>,
+    /// Its museum is switched on in Sources.
+    pub museum_enabled: bool,
+    /// Takes part in the current rotation.
+    pub in_rotation: bool,
     pub extra: Map<String, Value>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct MuseumSummary {
+    pub name: String,
+    pub count: usize,
+    pub enabled: bool,
+    #[serde(flatten)]
+    pub policy: MuseumPolicy,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct GenreSummary {
+    pub id: String,
+    pub name: String,
+    pub count: usize,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ToneSummary {
+    /// Brightness from which a painting counts as light.
+    pub threshold: f64,
+    pub auto_threshold: f64,
+    pub light: usize,
+    pub dark: usize,
+    /// Paintings Galeria has not measured yet.
+    pub unknown: usize,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct RotationSummary {
+    /// Paintings in the chosen group (before light/dark matching).
+    pub count: usize,
+    /// Of those, how many suit the current appearance.
+    pub matching: usize,
+    /// The chosen group has nothing to show, so everything is shown instead.
+    pub empty: bool,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct DownloadSummary {
+    pub active: usize,
+    pub done: usize,
+    pub failed: usize,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -202,6 +299,13 @@ pub struct Snapshot {
     pub live_supported: bool,
     pub version: &'static str,
     pub original_wallpapers: usize,
+    /// "light" or "dark": the system appearance Galeria currently sees.
+    pub theme: Option<&'static str>,
+    pub tone: ToneSummary,
+    pub rotation: RotationSummary,
+    pub museums: Vec<MuseumSummary>,
+    pub genres: Vec<GenreSummary>,
+    pub downloads: DownloadSummary,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -234,6 +338,10 @@ impl Core {
             .unwrap_or_default();
         let _ = std::fs::create_dir_all(&paths.styles);
         let styles = styles::load(&paths.styles);
+        let tones: tone::Store = std::fs::read(&paths.tones)
+            .ok()
+            .and_then(|b| serde_json::from_slice(&b).ok())
+            .unwrap_or_default();
         Core {
             inner: Mutex::new(Inner {
                 settings,
@@ -249,10 +357,19 @@ impl Core {
                 bad: HashMap::new(),
                 styles,
                 quitting: false,
+                tones,
+                tones_dirty: 0,
+                tones_failed: HashSet::new(),
+                auto_threshold: 112.0,
+                dark: None,
+                dark_forced: None,
                 last_snapshot: String::new(),
                 last_tray: String::new(),
             }),
             paths,
+            http: sources::Http::new(),
+            downloads: download::Queue::default(),
+            tone_wake: Notify::new(),
             enrich_wake: Notify::new(),
             watchers: Mutex::new(Vec::new()),
             colors: Mutex::new(HashMap::new()),
@@ -274,8 +391,27 @@ impl Core {
         })
     }
 
+    /// What the museum providers need: the HTTP client, the cache folder and the museums already in the library.
+    pub fn source_ctx(&self, app: &AppHandle) -> sources::Ctx {
+        let mut museums: Vec<String> = self
+            .lock()
+            .library
+            .paintings
+            .iter()
+            .filter_map(|p| p.museum.clone())
+            .collect();
+        museums.sort();
+        museums.dedup();
+        sources::Ctx {
+            http: self.http.clone(),
+            cache: self.paths.cache.clone(),
+            app: Some(app.clone()),
+            museums,
+        }
+    }
+
     pub fn snapshot(&self) -> Snapshot {
-        snapshot_of(&self.lock(), &self.paths)
+        snapshot_of(&self.lock(), &self.paths, self.downloads.counts())
     }
 
     pub fn library_view(&self) -> LibraryView {
@@ -312,31 +448,40 @@ impl Core {
         }
         let src = self.source_for(id).ok_or("unknown painting")?;
         let average = images::average_color(&src, &self.paths.cache)?;
-        let c = Colors { wall: wall_color(&average), average };
-        self.colors.lock().unwrap().insert(id.to_string(), c.clone());
+        let c = Colors {
+            wall: wall_color(&average),
+            average,
+        };
+        self.colors
+            .lock()
+            .unwrap()
+            .insert(id.to_string(), c.clone());
         Ok(c)
     }
 }
 
 fn view(i: &Inner, p: &Painting) -> PaintingView {
     let e: Option<&Enrichment> = i.enrich.works.get(&p.enrich_key());
-    let fill = |m: &Option<String>, f: &dyn Fn(&Enrichment) -> Option<String>| m.clone().or_else(|| e.and_then(f));
+    let fill = |m: &Option<String>, f: &dyn Fn(&Enrichment) -> Option<String>| {
+        m.clone().or_else(|| e.and_then(f))
+    };
     let (title, original_title) = match e.and_then(|e| e.title_en.clone()) {
         Some(en) if !en.eq_ignore_ascii_case(&p.title) => (en, Some(p.title.clone())),
         _ => (p.title.clone(), None),
     };
-    let (description, description_source, description_license, description_lang) = match &p.description {
-        Some(d) => (Some(d.clone()), None, None, None),
-        None => match e {
-            Some(e) => (
-                e.description.clone(),
-                e.description_source.clone(),
-                e.description_license.clone(),
-                e.description_lang.clone(),
-            ),
-            None => (None, None, None, None),
-        },
-    };
+    let (description, description_source, description_license, description_lang) =
+        match &p.description {
+            Some(d) => (Some(d.clone()), None, None, None),
+            None => match e {
+                Some(e) => (
+                    e.description.clone(),
+                    e.description_source.clone(),
+                    e.description_license.clone(),
+                    e.description_lang.clone(),
+                ),
+                None => (None, None, None, None),
+            },
+        };
     PaintingView {
         id: p.id.clone(),
         file: p.file.clone(),
@@ -358,6 +503,7 @@ fn view(i: &Inner, p: &Painting) -> PaintingView {
         credit_line: fill(&p.credit_line, &|e| e.credit_line.clone()),
         accession: fill(&p.accession, &|e| e.accession.clone()),
         license: p.license.clone(),
+        attribution_required: p.attribution_required,
         source: p.source.clone(),
         source_page: p.source_page.clone(),
         wikipedia_url: e.and_then(|e| e.wikipedia_url.clone()),
@@ -371,18 +517,186 @@ fn view(i: &Inner, p: &Painting) -> PaintingView {
         excluded: i.settings.excluded.binary_search(&p.id).is_ok(),
         favorite: i.settings.favorites.binary_search(&p.id).is_ok(),
         enriched: e.is_some_and(|e| e.ok),
+        genres: p.genres.clone(),
+        brightness: brightness_of(i, p),
+        tone: tone_of(i, p),
+        tone_override: i.settings.appearance.overrides.get(&p.id).copied(),
+        museum_enabled: museum_enabled(i, p),
+        in_rotation: allowed(i, p) && in_scope(i, p),
         extra: p.extra.clone(),
     }
 }
 
-fn snapshot_of(i: &Inner, paths: &Paths) -> Snapshot {
+// ---------------------------------------------------------------------------
+// Groups: museums, genres, playlists, light & dark
+// ---------------------------------------------------------------------------
+
+fn museum_enabled(i: &Inner, p: &Painting) -> bool {
+    p.museum.as_ref().is_none_or(|m| {
+        i.settings
+            .sources
+            .disabled_museums
+            .binary_search(m)
+            .is_err()
+    })
+}
+
+/// Not hidden by the user and not from a switched-off museum.
+fn allowed(i: &Inner, p: &Painting) -> bool {
+    i.settings.excluded.binary_search(&p.id).is_err() && museum_enabled(i, p)
+}
+
+/// Whether a painting belongs to the group the user chose to rotate through.
+fn in_scope(i: &Inner, p: &Painting) -> bool {
+    let s = &i.settings.rotation.scope;
+    match s.kind {
+        ScopeKind::All => true,
+        ScopeKind::Favorites => i.settings.favorites.binary_search(&p.id).is_ok(),
+        ScopeKind::Playlist => s
+            .playlist
+            .as_ref()
+            .and_then(|id| i.settings.playlists.iter().find(|pl| &pl.id == id))
+            .is_some_and(|pl| pl.items.contains(&p.id)),
+        ScopeKind::Filter => {
+            let museum =
+                s.museums.is_empty() || p.museum.as_ref().is_some_and(|m| s.museums.contains(m));
+            let genre = s.genres.is_empty()
+                || p.genres.iter().any(|g| s.genres.contains(g))
+                || (p.genres.is_empty() && s.genres.iter().any(|g| g == genres::OTHER));
+            museum && genre
+        }
+        ScopeKind::Selection => s.selection.contains(&p.id),
+    }
+}
+
+/// The scope to apply: the chosen one, or everything when it would leave nothing to show.
+fn scope_usable(i: &Inner) -> bool {
+    i.settings.rotation.scope.kind == ScopeKind::All
+        || i.library
+            .paintings
+            .iter()
+            .any(|p| allowed(i, p) && in_scope(i, p))
+}
+
+fn tone_key(p: &Painting) -> String {
+    format!("{}:{}:{}", p.file, p.bytes, p.modified)
+}
+
+fn brightness_of(i: &Inner, p: &Painting) -> Option<f64> {
+    p.brightness.or_else(|| {
+        i.tones
+            .get(&p.id)
+            .filter(|c| c.key == tone_key(p))
+            .map(|c| c.measure.brightness)
+    })
+}
+
+fn threshold(i: &Inner) -> f64 {
+    i.settings.appearance.threshold.unwrap_or(i.auto_threshold)
+}
+
+fn tone_of(i: &Inner, p: &Painting) -> Option<Tone> {
+    match i.settings.appearance.overrides.get(&p.id) {
+        Some(ToneOverride::Light) => Some(Tone::Light),
+        Some(ToneOverride::Dark) => Some(Tone::Dark),
+        Some(ToneOverride::Both) => None,
+        None => brightness_of(i, p).map(|b| tone::classify(b, threshold(i))),
+    }
+}
+
+fn is_dark(i: &Inner) -> Option<bool> {
+    i.dark_forced.or(i.dark)
+}
+
+/// Does the painting suit the system's current appearance? Unmeasured paintings
+/// and those marked "both" suit either.
+fn suits_appearance(i: &Inner, p: &Painting) -> bool {
+    if !i.settings.appearance.match_system {
+        return true;
+    }
+    match (is_dark(i), tone_of(i, p)) {
+        (Some(dark), Some(t)) => (t == Tone::Dark) == dark,
+        _ => true,
+    }
+}
+
+fn recompute_threshold(i: &mut Inner) {
+    let mut values: Vec<f64> = i
+        .library
+        .paintings
+        .iter()
+        .filter(|p| allowed(i, p))
+        .filter_map(|p| brightness_of(i, p))
+        .collect();
+    i.auto_threshold = tone::auto_threshold(&mut values);
+}
+
+fn museum_summaries(i: &Inner) -> Vec<MuseumSummary> {
+    let mut counts: HashMap<&str, usize> = HashMap::new();
+    for p in &i.library.paintings {
+        if let Some(m) = p.museum.as_deref() {
+            *counts.entry(m).or_default() += 1;
+        }
+    }
+    let mut out: Vec<MuseumSummary> = counts
+        .into_iter()
+        .map(|(name, count)| MuseumSummary {
+            enabled: i
+                .settings
+                .sources
+                .disabled_museums
+                .binary_search_by(|d| d.as_str().cmp(name))
+                .is_err(),
+            policy: licensing::museum_policy(name),
+            name: name.to_string(),
+            count,
+        })
+        .collect();
+    out.sort_by(|a, b| b.count.cmp(&a.count).then_with(|| a.name.cmp(&b.name)));
+    out
+}
+
+fn genre_summaries(i: &Inner) -> Vec<GenreSummary> {
+    let mut out: Vec<GenreSummary> = genres::all()
+        .iter()
+        .map(|g| GenreSummary {
+            count: i
+                .library
+                .paintings
+                .iter()
+                .filter(|p| p.genres.contains(&g.id))
+                .count(),
+            id: g.id.clone(),
+            name: g.name.clone(),
+        })
+        .filter(|g| g.count > 0)
+        .collect();
+    let other = i
+        .library
+        .paintings
+        .iter()
+        .filter(|p| p.genres.is_empty())
+        .count();
+    if other > 0 {
+        out.push(GenreSummary {
+            id: genres::OTHER.into(),
+            name: genres::name(genres::OTHER).into(),
+            count: other,
+        });
+    }
+    out
+}
+
+fn snapshot_of(i: &Inner, paths: &Paths, downloads: (usize, usize, usize)) -> Snapshot {
     let interval = i.settings.rotation.interval_minutes as u64 * 60;
     let displays = i
         .displays
         .iter()
         .map(|d| {
             let a = i.persisted.assignments.get(&d.key);
-            let painting = a.and_then(|a| i.library.get(&a.painting)).map(|p| view(i, p));
+            let painting = a
+                .and_then(|a| i.library.get(&a.painting))
+                .map(|p| view(i, p));
             let shown_at = a.map(|a| a.shown_at).unwrap_or(0);
             DisplayView {
                 info: d.clone(),
@@ -405,7 +719,12 @@ fn snapshot_of(i: &Inner, paths: &Paths) -> Snapshot {
             manifest_found: r.manifest_found,
             entries: r.entries,
             valid: r.valid,
-            eligible: i.library.paintings.iter().filter(|p| i.settings.excluded.binary_search(&p.id).is_err()).count(),
+            eligible: i
+                .library
+                .paintings
+                .iter()
+                .filter(|p| i.settings.excluded.binary_search(&p.id).is_err())
+                .count(),
             missing: r.missing.len(),
             invalid: r.invalid.len(),
             duplicates: r.duplicates.len(),
@@ -421,7 +740,10 @@ fn snapshot_of(i: &Inner, paths: &Paths) -> Snapshot {
                 .count(),
             enrich_busy: i.enrich_busy,
         },
-        builtin_styles: styles::BUILTIN.iter().map(|(id, name)| BuiltinStyle { id, name }).collect(),
+        builtin_styles: styles::BUILTIN
+            .iter()
+            .map(|(id, name)| BuiltinStyle { id, name })
+            .collect(),
         custom_styles: i.styles.clone(),
         styles_dir: paths.styles.clone(),
         platform: platform::PLATFORM,
@@ -430,7 +752,54 @@ fn snapshot_of(i: &Inner, paths: &Paths) -> Snapshot {
         original_wallpapers: if paths.wallpaper_backup.exists() {
             i.displays.len()
         } else {
-            i.persisted.original_wallpapers.values().filter(|p| p.is_file()).count()
+            i.persisted
+                .original_wallpapers
+                .values()
+                .filter(|p| p.is_file())
+                .count()
+        },
+        theme: is_dark(i).map(|d| if d { "dark" } else { "light" }),
+        tone: {
+            let tones: Vec<Option<Tone>> = i
+                .library
+                .paintings
+                .iter()
+                .filter(|p| allowed(i, p))
+                .map(|p| tone_of(i, p))
+                .collect();
+            ToneSummary {
+                threshold: threshold(i),
+                auto_threshold: i.auto_threshold,
+                light: tones.iter().filter(|t| **t == Some(Tone::Light)).count(),
+                dark: tones.iter().filter(|t| **t == Some(Tone::Dark)).count(),
+                unknown: i
+                    .library
+                    .paintings
+                    .iter()
+                    .filter(|p| allowed(i, p) && brightness_of(i, p).is_none())
+                    .count(),
+            }
+        },
+        rotation: {
+            let usable = scope_usable(i);
+            let group: Vec<&Painting> = i
+                .library
+                .paintings
+                .iter()
+                .filter(|p| allowed(i, p) && (!usable || in_scope(i, p)))
+                .collect();
+            RotationSummary {
+                count: group.len(),
+                matching: group.iter().filter(|p| suits_appearance(i, p)).count(),
+                empty: !usable,
+            }
+        },
+        museums: museum_summaries(i),
+        genres: genre_summaries(i),
+        downloads: DownloadSummary {
+            active: downloads.0,
+            done: downloads.1,
+            failed: downloads.2,
         },
     }
 }
@@ -444,7 +813,11 @@ pub fn wall_color(avg: &str) -> String {
     let d = max - min;
     let (mut h, mut s) = (0.0, 0.0);
     if d > 1e-6 {
-        s = if l > 0.5 { d / (2.0 - max - min) } else { d / (max + min) };
+        s = if l > 0.5 {
+            d / (2.0 - max - min)
+        } else {
+            d / (max + min)
+        };
         h = if max == r {
             (g - b) / d + if g < b { 6.0 } else { 0.0 }
         } else if max == g {
@@ -472,7 +845,11 @@ pub fn wall_color(avg: &str) -> String {
             p
         }
     };
-    let q = if l < 0.5 { l * (1.0 + s) } else { l + s - l * s };
+    let q = if l < 0.5 {
+        l * (1.0 + s)
+    } else {
+        l + s - l * s
+    };
     let p = 2.0 * l - q;
     let c = |v: f64| (v.clamp(0.0, 1.0) * 255.0).round() as u8;
     format!(
@@ -517,8 +894,17 @@ pub fn layout_kind(w: &WallpaperSettings, iw: f64, ih: f64, vw: f64, vh: f64) ->
 // Selection
 // ---------------------------------------------------------------------------
 
-fn eligible(i: &Inner, p: &Painting, display: Option<&DisplayInfo>, strict: bool) -> bool {
-    if i.settings.excluded.binary_search(&p.id).is_ok() {
+fn eligible(
+    i: &Inner,
+    p: &Painting,
+    display: Option<&DisplayInfo>,
+    strict: bool,
+    scoped: bool,
+) -> bool {
+    if !allowed(i, p) || (scoped && !in_scope(i, p)) {
+        return false;
+    }
+    if strict && !suits_appearance(i, p) {
         return false;
     }
     if let Some(&t) = i.bad.get(&p.id) {
@@ -560,7 +946,11 @@ fn sync_deck(i: &mut Inner) {
     }
     match order {
         Order::Sequential => {
-            let current = i.persisted.deck.get(i.persisted.deck_pos.saturating_sub(1)).cloned();
+            let current = i
+                .persisted
+                .deck
+                .get(i.persisted.deck_pos.saturating_sub(1))
+                .cloned();
             i.persisted.deck = ids.clone();
             i.persisted.deck_pos = current
                 .and_then(|c| ids.iter().position(|id| *id == c))
@@ -569,7 +959,10 @@ fn sync_deck(i: &mut Inner) {
         }
         Order::Shuffle => {
             let pos = i.persisted.deck_pos.min(i.persisted.deck.len());
-            let removed_before = i.persisted.deck[..pos].iter().filter(|id| !known.contains(id)).count();
+            let removed_before = i.persisted.deck[..pos]
+                .iter()
+                .filter(|id| !known.contains(id))
+                .count();
             i.persisted.deck.retain(|id| known.contains(id));
             i.persisted.deck_pos = pos - removed_before;
             let in_deck: HashSet<String> = i.persisted.deck.iter().cloned().collect();
@@ -589,7 +982,11 @@ fn pick_next(i: &mut Inner, display_key: &str) -> Option<String> {
         return None;
     }
     let display = i.displays.iter().find(|d| d.key == display_key).cloned();
-    let current = i.persisted.assignments.get(display_key).map(|a| a.painting.clone());
+    let current = i
+        .persisted
+        .assignments
+        .get(display_key)
+        .map(|a| a.painting.clone());
     let elsewhere: HashSet<String> = if i.settings.wallpaper.same_on_all_displays {
         HashSet::new()
     } else {
@@ -600,6 +997,8 @@ fn pick_next(i: &mut Inner, display_key: &str) -> Option<String> {
             .map(|(_, a)| a.painting.clone())
             .collect()
     };
+    // The chosen group applies unless it has nothing to show at all.
+    let scoped = scope_usable(i);
     for strict in [true, false] {
         for avoid_others in [true, false] {
             for _ in 0..n {
@@ -615,7 +1014,10 @@ fn pick_next(i: &mut Inner, display_key: &str) -> Option<String> {
                 let idx = i.persisted.deck_pos;
                 let id = i.persisted.deck[idx].clone();
                 i.persisted.deck_pos += 1;
-                let ok = i.library.get(&id).is_some_and(|p| eligible(i, p, display.as_ref(), strict))
+                let ok = i
+                    .library
+                    .get(&id)
+                    .is_some_and(|p| eligible(i, p, display.as_ref(), strict, scoped))
                     && (n == 1 || current.as_deref() != Some(id.as_str()))
                     && (!avoid_others || !elsewhere.contains(&id));
                 if ok {
@@ -647,7 +1049,10 @@ fn ensure_assignments(i: &mut Inner) -> Vec<String> {
     let primary = keys.first().cloned();
     for key in &keys {
         if same && Some(key) != primary.as_ref() {
-            let p = primary.as_ref().and_then(|k| i.persisted.assignments.get(k)).map(|a| a.painting.clone());
+            let p = primary
+                .as_ref()
+                .and_then(|k| i.persisted.assignments.get(k))
+                .map(|a| a.painting.clone());
             if let Some(p) = p {
                 let cur = i.persisted.assignments.get(key).map(|a| a.painting.clone());
                 if cur.as_deref() != Some(p.as_str()) && !p.is_empty() {
@@ -657,12 +1062,13 @@ fn ensure_assignments(i: &mut Inner) -> Vec<String> {
             }
             continue;
         }
+        let scoped = scope_usable(i);
         let valid = i
             .persisted
             .assignments
             .get(key)
             .and_then(|a| i.library.get(&a.painting))
-            .is_some_and(|p| i.settings.excluded.binary_search(&p.id).is_err());
+            .is_some_and(|p| allowed(i, p) && (!scoped || in_scope(i, p)));
         if !valid {
             if let Some(id) = pick_next(i, key) {
                 assign(i, key, id, false);
@@ -681,9 +1087,10 @@ fn ensure_assignments(i: &mut Inner) -> Vec<String> {
 /// only when something actually changed.
 pub fn publish(app: &AppHandle) {
     let core = app.state::<Core>();
+    let downloads = core.downloads.counts();
     let (snap, changed, tray_changed) = {
         let mut i = core.lock();
-        let snap = snapshot_of(&i, &core.paths);
+        let snap = snapshot_of(&i, &core.paths, downloads);
         let json = serde_json::to_string(&snap).unwrap_or_default();
         let changed = json != i.last_snapshot;
         if changed {
@@ -706,6 +1113,7 @@ pub fn publish(app: &AppHandle) {
 
 pub fn start(app: &AppHandle) {
     refresh_displays(app, true);
+    app.state::<Core>().lock().dark = platform::system_dark();
     reload_library(app);
     restart_watchers(app);
     wall::reconcile(app);
@@ -720,14 +1128,179 @@ pub fn start(app: &AppHandle) {
             tick.tick().await;
             n += 1;
             rotation_tick(&a);
-            if n.is_multiple_of(2) {
-                let a2 = a.clone();
-                let _ = tauri::async_runtime::spawn_blocking(move || refresh_displays(&a2, false)).await;
-            }
+            let a2 = a.clone();
+            let _ = tauri::async_runtime::spawn_blocking(move || {
+                if let Some(dark) = platform::system_dark() {
+                    set_dark(&a2, dark);
+                }
+                if n.is_multiple_of(2) {
+                    refresh_displays(&a2, false);
+                }
+            })
+            .await;
         }
     });
-    let a = app.clone();
-    tauri::async_runtime::spawn(enrich_loop(a));
+    tauri::async_runtime::spawn(enrich_loop(app.clone()));
+    tauri::async_runtime::spawn(tone_loop(app.clone()));
+    tauri::async_runtime::spawn(download::worker(app.clone()));
+}
+
+// ---------------------------------------------------------------------------
+// Light & dark
+// ---------------------------------------------------------------------------
+
+/// The system switched appearance (or Galeria just found out which one it is in).
+pub fn set_dark(app: &AppHandle, dark: bool) {
+    let core = app.state::<Core>();
+    {
+        let mut i = core.lock();
+        if i.dark == Some(dark) {
+            return;
+        }
+        log::info!("system appearance: {}", if dark { "dark" } else { "light" });
+        i.dark = Some(dark);
+    }
+    match_appearance(app);
+    publish(app);
+}
+
+/// One line about what is showing and why, for `galeria --debug`.
+pub fn debug_summary(app: &AppHandle) -> String {
+    let core = app.state::<Core>();
+    let i = core.lock();
+    let showing: Vec<Value> = i
+        .displays
+        .iter()
+        .filter_map(|d| {
+            i.persisted
+                .assignments
+                .get(&d.key)
+                .and_then(|a| i.library.get(&a.painting))
+        })
+        .map(|p| {
+            serde_json::json!({
+                "id": p.id, "museum": p.museum, "genres": p.genres,
+                "brightness": brightness_of(&i, p), "tone": tone_of(&i, p),
+                "inScope": in_scope(&i, p), "suitsAppearance": suits_appearance(&i, p),
+            })
+        })
+        .collect();
+    let scoped = scope_usable(&i);
+    let group: Vec<&Painting> = i
+        .library
+        .paintings
+        .iter()
+        .filter(|p| allowed(&i, p) && (!scoped || in_scope(&i, p)))
+        .collect();
+    serde_json::json!({
+        "dark": is_dark(&i), "matchSystem": i.settings.appearance.match_system, "threshold": threshold(&i),
+        "scope": i.settings.rotation.scope.kind, "inRotation": group.len(),
+        "suited": group.iter().filter(|p| suits_appearance(&i, p)).count(),
+        "disabledMuseums": i.settings.sources.disabled_museums, "showing": showing,
+    })
+    .to_string()
+}
+
+/// `galeria --theme light|dark|auto`: pretend, for testing.
+pub fn force_dark(app: &AppHandle, dark: Option<bool>) {
+    app.state::<Core>().lock().dark_forced = dark;
+    match_appearance(app);
+    publish(app);
+}
+
+/// Replace paintings that do not suit the current appearance (when the user asked for that).
+pub fn match_appearance(app: &AppHandle) {
+    let core = app.state::<Core>();
+    let stale: Vec<String> = {
+        let i = core.lock();
+        let a = &i.settings.appearance;
+        if !a.match_system || !a.switch_immediately || is_dark(&i).is_none() {
+            return;
+        }
+        i.displays
+            .iter()
+            .filter(|d| {
+                i.persisted
+                    .assignments
+                    .get(&d.key)
+                    .and_then(|a| i.library.get(&a.painting))
+                    .is_some_and(|p| !suits_appearance(&i, p))
+            })
+            .map(|d| d.key.clone())
+            .collect()
+    };
+    for key in stale {
+        // `advance` prefers paintings that suit the appearance and falls back when none do.
+        advance(app, Some(key), true);
+    }
+}
+
+async fn tone_loop(app: AppHandle) {
+    loop {
+        let core = app.state::<Core>();
+        // One painting at a time: decoding a 40-megapixel scan is the expensive part.
+        let job = {
+            let i = core.lock();
+            i.library
+                .paintings
+                .iter()
+                .find(|p| brightness_of(&i, p).is_none() && !i.tones_failed.contains(&p.id))
+                .map(|p| {
+                    (
+                        p.id.clone(),
+                        tone_key(p),
+                        Source {
+                            path: p.path.clone(),
+                            width: p.width,
+                            height: p.height,
+                            bytes: p.bytes,
+                            modified: p.modified,
+                        },
+                    )
+                })
+        };
+        let Some((id, key, src)) = job else {
+            {
+                let mut i = core.lock();
+                if i.tones_dirty > 0 {
+                    i.tones_dirty = 0;
+                    let _ = settings::write_json_atomic(&core.paths.tones, &i.tones);
+                    recompute_threshold(&mut i);
+                }
+            }
+            publish(&app);
+            core.tone_wake.notified().await;
+            continue;
+        };
+        let cache = core.paths.cache.clone();
+        let measured = tauri::async_runtime::spawn_blocking(move || {
+            let thumb = images::thumb_cached(&src, &cache)?;
+            let img = image::open(&thumb).map_err(|e| e.to_string())?.into_rgb8();
+            Ok::<_, String>(tone::measure(&img))
+        })
+        .await
+        .map_err(|e| e.to_string())
+        .and_then(|r| r);
+        {
+            let mut i = core.lock();
+            match measured {
+                Ok(measure) => {
+                    i.tones.insert(id, tone::Cached { key, measure });
+                    i.tones_dirty += 1;
+                    if i.tones_dirty >= 25 {
+                        i.tones_dirty = 1;
+                        let _ = settings::write_json_atomic(&core.paths.tones, &i.tones);
+                        recompute_threshold(&mut i);
+                    }
+                }
+                Err(e) => {
+                    log::debug!("could not measure {id}: {e}");
+                    i.tones_failed.insert(id);
+                }
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(40)).await;
+    }
 }
 
 pub fn refresh_displays(app: &AppHandle, initial: bool) {
@@ -741,7 +1314,12 @@ pub fn refresh_displays(app: &AppHandle, initial: bool) {
         if i.displays == list {
             return;
         }
-        log::info!("displays: {:?}", list.iter().map(|d| format!("{} {}x{}@{}", d.name, d.width, d.height, d.scale)).collect::<Vec<_>>());
+        log::info!(
+            "displays: {:?}",
+            list.iter()
+                .map(|d| format!("{} {}x{}@{}", d.name, d.width, d.height, d.scale))
+                .collect::<Vec<_>>()
+        );
         i.displays = list;
         let changed = ensure_assignments(&mut i);
         core.save_state(&i);
@@ -762,6 +1340,15 @@ pub fn reload_library(app: &AppHandle) {
         let mut i = core.lock();
         (i.settings.library_path.clone(), std::mem::take(&mut i.dims))
     };
+    if let Some(r) = &root {
+        download::sweep(r);
+        // Paintings Galeria downloaded stay listed even if another tool rewrote the manifest.
+        download::heal(
+            r,
+            &core.paths.downloads_journal,
+            &core.paths.manifest_backups,
+        );
+    }
     let lib = match &root {
         Some(r) => library::load(r, &mut dims),
         None => Library::default(),
@@ -770,9 +1357,16 @@ pub fn reload_library(app: &AppHandle) {
         let mut i = core.lock();
         i.dims = dims;
         let same_root = i.library.root.as_os_str() == lib.root.as_os_str();
-        if lib.report.error.is_some() && lib.report.manifest_found && same_root && !i.library.paintings.is_empty() {
+        if lib.report.error.is_some()
+            && lib.report.manifest_found
+            && same_root
+            && !i.library.paintings.is_empty()
+        {
             // The manifest is probably mid-write; keep the last good copy.
-            log::warn!("manifest unreadable, keeping previous library: {:?}", lib.report.error);
+            log::warn!(
+                "manifest unreadable, keeping previous library: {:?}",
+                lib.report.error
+            );
             i.library.report.error = lib.report.error;
         } else {
             log::info!(
@@ -785,6 +1379,23 @@ pub fn reload_library(app: &AppHandle) {
             );
             i.library = lib;
         }
+        // Forget measures of files that changed or left the library.
+        let keys: HashMap<&str, String> = i
+            .library
+            .paintings
+            .iter()
+            .map(|p| (p.id.as_str(), tone_key(p)))
+            .collect();
+        let stale: Vec<String> = i
+            .tones
+            .iter()
+            .filter(|(id, c)| keys.get(id.as_str()) != Some(&c.key))
+            .map(|(id, _)| id.clone())
+            .collect();
+        for id in stale {
+            i.tones.remove(&id);
+        }
+        recompute_threshold(&mut i);
         sync_deck(&mut i);
         let changed = ensure_assignments(&mut i);
         core.save_state(&i);
@@ -795,6 +1406,7 @@ pub fn reload_library(app: &AppHandle) {
         sync_system_wallpaper(app, Some(changed));
     }
     core.enrich_wake.notify_one();
+    core.tone_wake.notify_one();
 }
 
 pub fn reload_styles(app: &AppHandle) {
@@ -815,19 +1427,24 @@ pub fn restart_watchers(app: &AppHandle) {
 
     if let Some(root) = root.filter(|r| r.is_dir()) {
         let a = app.clone();
-        let res = new_debouncer(Duration::from_millis(1500), None, move |res: DebounceEventResult| {
-            let Ok(events) = res else { return };
-            let relevant = events.iter().any(|e| {
-                !matches!(e.event.kind, notify::EventKind::Access(_))
-                    && e.event.paths.iter().any(|p| {
-                        p.file_name().is_some_and(|n| n == library::MANIFEST) || library::is_image(p)
-                    })
-            });
-            if relevant {
-                let a = a.clone();
-                tauri::async_runtime::spawn_blocking(move || reload_library(&a));
-            }
-        });
+        let res = new_debouncer(
+            Duration::from_millis(1500),
+            None,
+            move |res: DebounceEventResult| {
+                let Ok(events) = res else { return };
+                let relevant = events.iter().any(|e| {
+                    !matches!(e.event.kind, notify::EventKind::Access(_))
+                        && e.event.paths.iter().any(|p| {
+                            p.file_name().is_some_and(|n| n == library::MANIFEST)
+                                || library::is_image(p)
+                        })
+                });
+                if relevant {
+                    let a = a.clone();
+                    tauri::async_runtime::spawn_blocking(move || reload_library(&a));
+                }
+            },
+        );
         match res {
             Ok(mut d) => match d.watch(&root, RecursiveMode::Recursive) {
                 Ok(()) => watchers.push(Box::new(d)),
@@ -838,12 +1455,18 @@ pub fn restart_watchers(app: &AppHandle) {
     }
 
     let a = app.clone();
-    if let Ok(mut d) = new_debouncer(Duration::from_millis(400), None, move |res: DebounceEventResult| {
-        if res.is_ok() {
-            reload_styles(&a);
-        }
-    }) {
-        if d.watch(&core.paths.styles, RecursiveMode::NonRecursive).is_ok() {
+    if let Ok(mut d) = new_debouncer(
+        Duration::from_millis(400),
+        None,
+        move |res: DebounceEventResult| {
+            if res.is_ok() {
+                reload_styles(&a);
+            }
+        },
+    ) {
+        if d.watch(&core.paths.styles, RecursiveMode::NonRecursive)
+            .is_ok()
+        {
             watchers.push(Box::new(d));
         }
     }
@@ -981,7 +1604,11 @@ fn apply_settings_change(app: &AppHandle, old: &Settings, new: &Settings) {
     }
     if old.general.launch_at_login != new.general.launch_at_login {
         use tauri_plugin_autostart::ManagerExt;
-        let r = if new.general.launch_at_login { app.autolaunch().enable() } else { app.autolaunch().disable() };
+        let r = if new.general.launch_at_login {
+            app.autolaunch().enable()
+        } else {
+            app.autolaunch().disable()
+        };
         if let Err(e) = r {
             log::warn!("autostart: {e}");
         }
@@ -992,13 +1619,25 @@ fn apply_settings_change(app: &AppHandle, old: &Settings, new: &Settings) {
     }
     let core = app.state::<Core>();
     let mut reassigned = Vec::new();
-    if old.excluded != new.excluded
+    // Anything that changes which paintings may be shown.
+    let group_changed = old.excluded != new.excluded
+        || old.sources != new.sources
+        || old.rotation.scope != new.rotation.scope
+        || old.playlists != new.playlists
+        || (new.rotation.scope.kind == ScopeKind::Favorites && old.favorites != new.favorites);
+    if group_changed
         || old.wallpaper.same_on_all_displays != new.wallpaper.same_on_all_displays
         || old.wallpaper.match_orientation != new.wallpaper.match_orientation
     {
         let mut i = core.lock();
+        if old.excluded != new.excluded || old.sources != new.sources {
+            recompute_threshold(&mut i);
+        }
         reassigned = ensure_assignments(&mut i);
         core.save_state(&i);
+    }
+    if old.appearance != new.appearance {
+        match_appearance(app);
     }
     let w0 = &old.wallpaper;
     let w1 = &new.wallpaper;
@@ -1021,7 +1660,11 @@ fn apply_settings_change(app: &AppHandle, old: &Settings, new: &Settings) {
 pub fn apply_dock_policy(app: &AppHandle, show: bool) {
     #[cfg(target_os = "macos")]
     {
-        let policy = if show { tauri::ActivationPolicy::Regular } else { tauri::ActivationPolicy::Accessory };
+        let policy = if show {
+            tauri::ActivationPolicy::Regular
+        } else {
+            tauri::ActivationPolicy::Accessory
+        };
         let _ = app.set_activation_policy(policy);
     }
     #[cfg(not(target_os = "macos"))]
@@ -1031,7 +1674,9 @@ pub fn apply_dock_policy(app: &AppHandle, show: bool) {
 pub fn set_plate_position(app: &AppHandle, scope: &str, display: Option<String>, x: f64, y: f64) {
     let patch = match (scope, display) {
         ("viewer", _) => serde_json::json!({ "viewer": { "platePosition": { "x": x, "y": y } } }),
-        (_, Some(key)) => serde_json::json!({ "plate": { "positions": { key: { "x": x, "y": y } } } }),
+        (_, Some(key)) => {
+            serde_json::json!({ "plate": { "positions": { key: { "x": x, "y": y } } } })
+        }
         (_, None) => return set_plate_preset(app, x, y),
     };
     if let Err(e) = patch_settings(app, &patch) {
@@ -1110,7 +1755,13 @@ pub fn sync_system_wallpaper(app: &AppHandle, keys: Option<Vec<String>>) {
                 .filter_map(|d| {
                     let a = i.persisted.assignments.get(&d.key)?;
                     let p = i.library.get(&a.painting)?;
-                    let kind = layout_kind(&i.settings.wallpaper, p.width as f64, p.height as f64, d.width, d.height);
+                    let kind = layout_kind(
+                        &i.settings.wallpaper,
+                        p.width as f64,
+                        p.height as f64,
+                        d.width,
+                        d.height,
+                    );
                     let src = Source {
                         path: p.path.clone(),
                         width: p.width,
@@ -1124,7 +1775,11 @@ pub fn sync_system_wallpaper(app: &AppHandle, keys: Option<Vec<String>>) {
         };
         let (matte, matte_color, root) = {
             let i = core.lock();
-            (i.settings.wallpaper.matte, i.settings.wallpaper.matte_color.clone(), i.settings.library_path.clone())
+            (
+                i.settings.wallpaper.matte,
+                i.settings.wallpaper.matte_color.clone(),
+                i.settings.library_path.clone(),
+            )
         };
         for (d, id, src, fill) in jobs {
             let color_hex = match matte {
@@ -1140,10 +1795,17 @@ pub fn sync_system_wallpaper(app: &AppHandle, keys: Option<Vec<String>>) {
                         .unwrap_or_else(|| matte_color.clone())
                 }
             };
-            let opts = SystemWallpaperOptions { fill, color: settings::parse_hex_color(&color_hex) };
+            let opts = SystemWallpaperOptions {
+                fill,
+                color: settings::parse_hex_color(&color_hex),
+            };
 
             // Remember what the user had before Galeria touched it.
-            let known = core.lock().persisted.original_wallpapers.contains_key(&d.key);
+            let known = core
+                .lock()
+                .persisted
+                .original_wallpapers
+                .contains_key(&d.key);
             if !known || !core.paths.wallpaper_backup.exists() {
                 let d2 = d.clone();
                 let a = app.clone();
@@ -1154,7 +1816,9 @@ pub fn sync_system_wallpaper(app: &AppHandle, keys: Option<Vec<String>>) {
                 .ok()
                 .flatten();
                 // Aerial/dynamic wallpapers may report no URL at all; that still isn't ours.
-                let ours = original.as_ref().is_some_and(|o| root.as_ref().is_some_and(|r| o.starts_with(r)));
+                let ours = original
+                    .as_ref()
+                    .is_some_and(|o| root.as_ref().is_some_and(|r| o.starts_with(r)));
                 if !ours {
                     // Only back up a configuration that isn't already Galeria's.
                     platform::backup_wallpaper_store(&core.paths.wallpaper_backup);
@@ -1196,12 +1860,20 @@ pub fn restore_original_wallpaper(app: &AppHandle) {
         let i = core.lock();
         i.displays
             .iter()
-            .filter_map(|d| i.persisted.original_wallpapers.get(&d.key).map(|p| (d.clone(), p.clone())))
+            .filter_map(|d| {
+                i.persisted
+                    .original_wallpapers
+                    .get(&d.key)
+                    .map(|p| (d.clone(), p.clone()))
+            })
             .filter(|(_, p)| p.is_file())
             .collect()
     };
     for (d, path) in jobs {
-        let opts = SystemWallpaperOptions { fill: true, color: (0.0, 0.0, 0.0) };
+        let opts = SystemWallpaperOptions {
+            fill: true,
+            color: (0.0, 0.0, 0.0),
+        };
         let r = platform::on_main(app, move || platform::set_system_wallpaper(&d, &path, opts));
         if let Some(Err(e)) = r {
             log::warn!("restore wallpaper: {e}");
@@ -1219,7 +1891,12 @@ impl Core {
         if !i.settings.general.enrich_online {
             return None;
         }
-        let showing: Vec<String> = i.persisted.assignments.values().map(|a| a.painting.clone()).collect();
+        let showing: Vec<String> = i
+            .persisted
+            .assignments
+            .values()
+            .map(|a| a.painting.clone())
+            .collect();
         let order: Vec<usize> = showing
             .iter()
             .filter_map(|id| i.library.index.get(id).copied())
@@ -1234,11 +1911,19 @@ impl Core {
             if i.enrich.works.get(&key).is_some_and(|e| !e.is_stale()) {
                 continue;
             }
+            // The Rijksmuseum's linked-data id may be in `persistent_url` rather than `source_page`.
+            let persistent = p
+                .extra
+                .get("persistent_url")
+                .and_then(|v| v.as_str())
+                .map(str::to_string);
             let job = Job {
                 key: key.clone(),
                 source: p.source.clone(),
                 source_id: p.source_id.clone(),
-                source_page: p.source_page.clone(),
+                source_page: persistent
+                    .filter(|u| u.contains("id.rijksmuseum.nl"))
+                    .or_else(|| p.source_page.clone()),
                 artist: p.artist.clone(),
                 title: p.title.clone(),
             };
@@ -1293,7 +1978,12 @@ async fn enrich_loop(app: AppHandle) {
             i.enrich.artists.clone()
         };
         let e = enricher.enrich(&job, &mut artists).await;
-        log::debug!("enriched {} ok={} desc={}", job.title, e.ok, e.description.is_some());
+        log::debug!(
+            "enriched {} ok={} desc={}",
+            job.title,
+            e.ok,
+            e.description.is_some()
+        );
         let (showing, flush) = {
             let mut i = core.lock();
             i.enrich.artists = artists;
@@ -1327,14 +2017,26 @@ mod tests {
     fn layout_kinds() {
         let w = WallpaperSettings::default();
         // 3:2 display; a 1.55 painting crops ~3% → fill.
-        assert_eq!(layout_kind(&w, 4096.0, 2642.0, 2560.0, 1707.0), LayoutKind::Cover);
+        assert_eq!(
+            layout_kind(&w, 4096.0, 2642.0, 2560.0, 1707.0),
+            LayoutKind::Cover
+        );
         // 2.96:1 panorama → pan.
-        assert_eq!(layout_kind(&w, 6209.0, 2100.0, 2560.0, 1707.0), LayoutKind::Pan);
+        assert_eq!(
+            layout_kind(&w, 6209.0, 2100.0, 2560.0, 1707.0),
+            LayoutKind::Pan
+        );
         let mut w2 = w.clone();
         w2.pan = false;
-        assert_eq!(layout_kind(&w2, 6209.0, 2100.0, 2560.0, 1707.0), LayoutKind::Contain);
+        assert_eq!(
+            layout_kind(&w2, 6209.0, 2100.0, 2560.0, 1707.0),
+            LayoutKind::Contain
+        );
         w2.fit = FitMode::Fit;
-        assert_eq!(layout_kind(&w2, 4096.0, 2642.0, 2560.0, 1707.0), LayoutKind::Contain);
+        assert_eq!(
+            layout_kind(&w2, 4096.0, 2642.0, 2560.0, 1707.0),
+            LayoutKind::Contain
+        );
     }
 
     #[test]

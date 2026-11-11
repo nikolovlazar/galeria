@@ -2,12 +2,18 @@ mod cli;
 mod commands;
 mod core;
 mod displays;
+mod download;
 mod enrich;
+mod genres;
 mod images;
 mod library;
+mod licensing;
+mod manifest;
 mod platform;
 mod settings;
+mod sources;
 mod styles;
+mod tone;
 mod tray;
 mod util;
 mod wall;
@@ -31,7 +37,10 @@ pub fn quit(app: &tauri::AppHandle) {
 }
 
 pub fn run() {
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("galeria_lib=info,warn")).init();
+    env_logger::Builder::from_env(
+        env_logger::Env::default().default_filter_or("galeria_lib=info,warn"),
+    )
+    .init();
 
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
@@ -43,7 +52,10 @@ pub fn run() {
         }))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
-        .plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, Some(vec![AUTOSTART_FLAG])))
+        .plugin(tauri_plugin_autostart::init(
+            MacosLauncher::LaunchAgent,
+            Some(vec![AUTOSTART_FLAG]),
+        ))
         .register_asynchronous_uri_scheme_protocol("galeria", images::handle)
         .invoke_handler(tauri::generate_handler![
             commands::get_snapshot,
@@ -72,6 +84,15 @@ pub fn run() {
             commands::refresh_enrichment,
             commands::clear_image_cache,
             commands::frontend_log,
+            commands::get_catalogue,
+            commands::discover_search,
+            commands::discover_prepare,
+            commands::download_start,
+            commands::download_cancel,
+            commands::download_clear,
+            commands::get_downloads,
+            commands::manifest_cleanup,
+            commands::report_theme,
             commands::quit,
         ])
         .setup(|app| {
@@ -80,14 +101,24 @@ pub fn run() {
             log::info!("config: {}", paths.config.display());
             app.manage(core::Core::new(paths));
 
-            let show_in_dock = app.state::<core::Core>().lock().settings.general.show_in_dock;
+            let show_in_dock = app
+                .state::<core::Core>()
+                .lock()
+                .settings
+                .general
+                .show_in_dock;
             core::apply_dock_policy(&handle, show_in_dock);
 
             core::start(&handle);
 
             let args: Vec<String> = std::env::args().collect();
             let autostarted = args.iter().any(|a| a == AUTOSTART_FLAG);
-            let needs_setup = app.state::<core::Core>().lock().settings.library_path.is_none();
+            let needs_setup = app
+                .state::<core::Core>()
+                .lock()
+                .settings
+                .library_path
+                .is_none();
             if needs_setup && !autostarted {
                 wall::spawn_open_settings(&handle, Some("library".into()));
             }

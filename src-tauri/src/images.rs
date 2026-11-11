@@ -20,11 +20,15 @@ pub const THUMB_EDGE: u32 = 640;
 const MAX_RENDERS_KEPT: usize = 80;
 
 static HEAVY: LazyLock<Semaphore> = LazyLock::new(|| {
-    let n = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4);
+    let n = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(4);
     Semaphore::new((n / 3).clamp(1, 3))
 });
 static THUMBS: LazyLock<Semaphore> = LazyLock::new(|| {
-    let n = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4);
+    let n = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(4);
     Semaphore::new((n / 2).clamp(2, 6))
 });
 
@@ -47,7 +51,11 @@ impl Source {
     }
 }
 
-pub fn handle(ctx: UriSchemeContext<'_, Wry>, req: Request<Vec<u8>>, responder: UriSchemeResponder) {
+pub fn handle(
+    ctx: UriSchemeContext<'_, Wry>,
+    req: Request<Vec<u8>>,
+    responder: UriSchemeResponder,
+) {
     let app = ctx.app_handle().clone();
     tauri::async_runtime::spawn(async move {
         let res = serve(&app, req).await;
@@ -60,7 +68,9 @@ async fn serve(app: &AppHandle, req: Request<Vec<u8>>) -> Response<Vec<u8>> {
     let Some((kind, enc_id)) = path.split_once('/') else {
         return error(StatusCode::BAD_REQUEST, "bad path");
     };
-    let id = percent_encoding::percent_decode_str(enc_id).decode_utf8_lossy().to_string();
+    let id = percent_encoding::percent_decode_str(enc_id)
+        .decode_utf8_lossy()
+        .to_string();
     let query = parse_query(req.uri().query().unwrap_or(""));
 
     let core = app.state::<Core>();
@@ -78,7 +88,12 @@ async fn serve(app: &AppHandle, req: Request<Vec<u8>>) -> Response<Vec<u8>> {
                 let s = src.clone();
                 blocking(move || render_cached(&s, s.width, s.height, &cache_dir)).await
             } else {
-                blocking(move || std::fs::read(&p).map(|b| (b, mime_for(&p))).map_err(|e| e.to_string())).await
+                blocking(move || {
+                    std::fs::read(&p)
+                        .map(|b| (b, mime_for(&p)))
+                        .map_err(|e| e.to_string())
+                })
+                .await
             }
         }
         "thumb" => {
@@ -87,13 +102,26 @@ async fn serve(app: &AppHandle, req: Request<Vec<u8>>) -> Response<Vec<u8>> {
             blocking(move || thumb_cached(&s, &cache_dir).and_then(|p| read_jpeg(&p))).await
         }
         "render" => {
-            let vw = query.iter().find(|(k, _)| k == "w").and_then(|(_, v)| v.parse::<f64>().ok()).unwrap_or(0.0);
-            let vh = query.iter().find(|(k, _)| k == "h").and_then(|(_, v)| v.parse::<f64>().ok()).unwrap_or(0.0);
+            let vw = query
+                .iter()
+                .find(|(k, _)| k == "w")
+                .and_then(|(_, v)| v.parse::<f64>().ok())
+                .unwrap_or(0.0);
+            let vh = query
+                .iter()
+                .find(|(k, _)| k == "h")
+                .and_then(|(_, v)| v.parse::<f64>().ok())
+                .unwrap_or(0.0);
             let contain = query.iter().any(|(k, v)| k == "mode" && v == "contain");
             let (tw, th) = target_size(src.width, src.height, vw, vh, contain);
             let p = src.path.clone();
             if !needs_transcode(&p) && (tw as f64) >= src.width as f64 * 0.85 {
-                blocking(move || std::fs::read(&p).map(|b| (b, mime_for(&p))).map_err(|e| e.to_string())).await
+                blocking(move || {
+                    std::fs::read(&p)
+                        .map(|b| (b, mime_for(&p)))
+                        .map_err(|e| e.to_string())
+                })
+                .await
             } else {
                 let _permit = HEAVY.acquire().await;
                 let s = src.clone();
@@ -118,8 +146,12 @@ async fn serve(app: &AppHandle, req: Request<Vec<u8>>) -> Response<Vec<u8>> {
     }
 }
 
-async fn blocking<T: Send + 'static>(f: impl FnOnce() -> Result<T, String> + Send + 'static) -> Result<T, String> {
-    tauri::async_runtime::spawn_blocking(f).await.map_err(|e| e.to_string())?
+async fn blocking<T: Send + 'static>(
+    f: impl FnOnce() -> Result<T, String> + Send + 'static,
+) -> Result<T, String> {
+    tauri::async_runtime::spawn_blocking(f)
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 fn error(status: StatusCode, msg: &str) -> Response<Vec<u8>> {
@@ -134,12 +166,24 @@ fn error(status: StatusCode, msg: &str) -> Response<Vec<u8>> {
 fn parse_query(q: &str) -> Vec<(String, String)> {
     q.split('&')
         .filter_map(|kv| kv.split_once('='))
-        .map(|(k, v)| (k.to_string(), percent_encoding::percent_decode_str(v).decode_utf8_lossy().to_string()))
+        .map(|(k, v)| {
+            (
+                k.to_string(),
+                percent_encoding::percent_decode_str(v)
+                    .decode_utf8_lossy()
+                    .to_string(),
+            )
+        })
         .collect()
 }
 
 fn mime_for(p: &Path) -> &'static str {
-    match p.extension().and_then(|e| e.to_str()).map(|e| e.to_ascii_lowercase()).as_deref() {
+    match p
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_ascii_lowercase())
+        .as_deref()
+    {
         Some("jpg") | Some("jpeg") => "image/jpeg",
         Some("png") => "image/png",
         Some("webp") => "image/webp",
@@ -154,7 +198,10 @@ fn mime_for(p: &Path) -> &'static str {
 
 fn needs_transcode(p: &Path) -> bool {
     matches!(
-        p.extension().and_then(|e| e.to_str()).map(|e| e.to_ascii_lowercase()).as_deref(),
+        p.extension()
+            .and_then(|e| e.to_str())
+            .map(|e| e.to_ascii_lowercase())
+            .as_deref(),
         Some("tif") | Some("tiff") | Some("bmp")
     )
 }
@@ -168,14 +215,19 @@ pub fn target_size(iw: u32, ih: u32, vw: f64, vh: f64, contain: bool) -> (u32, u
     let sx = vw / iw as f64;
     let sy = vh / ih as f64;
     let s = if contain { sx.min(sy) } else { sx.max(sy) }.min(1.0);
-    (((iw as f64) * s).round().max(1.0) as u32, ((ih as f64) * s).round().max(1.0) as u32)
+    (
+        ((iw as f64) * s).round().max(1.0) as u32,
+        ((ih as f64) * s).round().max(1.0) as u32,
+    )
 }
 
 fn read_jpeg(p: &Path) -> Result<(Vec<u8>, &'static str), String> {
-    std::fs::read(p).map(|b| (b, "image/jpeg")).map_err(|e| e.to_string())
+    std::fs::read(p)
+        .map(|b| (b, "image/jpeg"))
+        .map_err(|e| e.to_string())
 }
 
-fn decode(path: &Path) -> Result<(DynamicImage, Option<Vec<u8>>), String> {
+pub(crate) fn decode(path: &Path) -> Result<(DynamicImage, Option<Vec<u8>>), String> {
     let mut reader = image::ImageReader::open(path)
         .map_err(|e| e.to_string())?
         .with_guessed_format()
@@ -191,13 +243,19 @@ fn decode(path: &Path) -> Result<(DynamicImage, Option<Vec<u8>>), String> {
     Ok((img, icc))
 }
 
-fn resize_rgb(img: DynamicImage, tw: u32, th: u32, alg: fr::ResizeAlg) -> Result<Vec<u8>, String> {
+pub(crate) fn resize_rgb(
+    img: DynamicImage,
+    tw: u32,
+    th: u32,
+    alg: fr::ResizeAlg,
+) -> Result<Vec<u8>, String> {
     let rgb = img.into_rgb8();
     let (w, h) = rgb.dimensions();
     if (w, h) == (tw, th) {
         return Ok(rgb.into_raw());
     }
-    let src = fr::images::Image::from_vec_u8(w, h, rgb.into_raw(), fr::PixelType::U8x3).map_err(|e| e.to_string())?;
+    let src = fr::images::Image::from_vec_u8(w, h, rgb.into_raw(), fr::PixelType::U8x3)
+        .map_err(|e| e.to_string())?;
     let mut dst = fr::images::Image::new(tw, th, fr::PixelType::U8x3);
     let mut resizer = fr::Resizer::new();
     resizer
@@ -206,13 +264,20 @@ fn resize_rgb(img: DynamicImage, tw: u32, th: u32, alg: fr::ResizeAlg) -> Result
     Ok(dst.into_vec())
 }
 
-fn encode_jpeg(rgb: &[u8], w: u32, h: u32, icc: Option<Vec<u8>>, quality: u8) -> Result<Vec<u8>, String> {
+pub(crate) fn encode_jpeg(
+    rgb: &[u8],
+    w: u32,
+    h: u32,
+    icc: Option<Vec<u8>>,
+    quality: u8,
+) -> Result<Vec<u8>, String> {
     let mut out = Vec::with_capacity((w * h / 4) as usize);
     let mut enc = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut out, quality);
     if let Some(icc) = icc {
         let _ = enc.set_icc_profile(icc);
     }
-    enc.write_image(rgb, w, h, image::ExtendedColorType::Rgb8).map_err(|e| e.to_string())?;
+    enc.write_image(rgb, w, h, image::ExtendedColorType::Rgb8)
+        .map_err(|e| e.to_string())?;
     Ok(out)
 }
 
@@ -225,31 +290,57 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
     std::fs::rename(&tmp, path).map_err(|e| e.to_string())
 }
 
-pub fn render_cached(src: &Source, tw: u32, th: u32, cache: &Path) -> Result<(Vec<u8>, &'static str), String> {
-    let out = cache.join("renders").join(format!("{}_{}x{}.jpg", src.cache_key(), tw, th));
+pub fn render_cached(
+    src: &Source,
+    tw: u32,
+    th: u32,
+    cache: &Path,
+) -> Result<(Vec<u8>, &'static str), String> {
+    let out = cache
+        .join("renders")
+        .join(format!("{}_{}x{}.jpg", src.cache_key(), tw, th));
     if let Ok(b) = std::fs::read(&out) {
         return Ok((b, "image/jpeg"));
     }
     let started = std::time::Instant::now();
     let (img, icc) = decode(&src.path)?;
-    let rgb = resize_rgb(img, tw, th, fr::ResizeAlg::Convolution(fr::FilterType::Lanczos3))?;
+    let rgb = resize_rgb(
+        img,
+        tw,
+        th,
+        fr::ResizeAlg::Convolution(fr::FilterType::Lanczos3),
+    )?;
     let bytes = encode_jpeg(&rgb, tw, th, icc, 92)?;
     write_atomic(&out, &bytes)?;
-    log::info!("rendered {} at {tw}x{th} in {:?}", src.path.display(), started.elapsed());
+    log::info!(
+        "rendered {} at {tw}x{th} in {:?}",
+        src.path.display(),
+        started.elapsed()
+    );
     prune(&cache.join("renders"), MAX_RENDERS_KEPT);
     Ok((bytes, "image/jpeg"))
 }
 
 pub fn thumb_cached(src: &Source, cache: &Path) -> Result<PathBuf, String> {
-    let out = cache.join("thumbs").join(format!("{}.jpg", src.cache_key()));
+    let out = cache
+        .join("thumbs")
+        .join(format!("{}.jpg", src.cache_key()));
     if out.exists() {
         return Ok(out);
     }
     let (img, icc) = decode(&src.path)?;
     let (w, h) = (img.width(), img.height());
     let s = (THUMB_EDGE as f64 / w.max(h) as f64).min(1.0);
-    let (tw, th) = (((w as f64) * s).round().max(1.0) as u32, ((h as f64) * s).round().max(1.0) as u32);
-    let rgb = resize_rgb(img, tw, th, fr::ResizeAlg::Convolution(fr::FilterType::CatmullRom))?;
+    let (tw, th) = (
+        ((w as f64) * s).round().max(1.0) as u32,
+        ((h as f64) * s).round().max(1.0) as u32,
+    );
+    let rgb = resize_rgb(
+        img,
+        tw,
+        th,
+        fr::ResizeAlg::Convolution(fr::FilterType::CatmullRom),
+    )?;
     let bytes = encode_jpeg(&rgb, tw, th, icc, 85)?;
     write_atomic(&out, &bytes)?;
     Ok(out)
@@ -261,10 +352,18 @@ pub fn average_color(src: &Source, cache: &Path) -> Result<String, String> {
     let img = image::open(&thumb).map_err(|e| e.to_string())?.into_rgb8();
     let to_lin = |c: u8| {
         let c = c as f64 / 255.0;
-        if c <= 0.04045 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) }
+        if c <= 0.04045 {
+            c / 12.92
+        } else {
+            ((c + 0.055) / 1.055).powf(2.4)
+        }
     };
     let to_srgb = |l: f64| {
-        let c = if l <= 0.0031308 { l * 12.92 } else { 1.055 * l.powf(1.0 / 2.4) - 0.055 };
+        let c = if l <= 0.0031308 {
+            l * 12.92
+        } else {
+            1.055 * l.powf(1.0 / 2.4) - 0.055
+        };
         (c.clamp(0.0, 1.0) * 255.0).round() as u8
     };
     let (mut r, mut g, mut b, mut n) = (0.0, 0.0, 0.0, 0.0);
@@ -277,11 +376,18 @@ pub fn average_color(src: &Source, cache: &Path) -> Result<String, String> {
     if n == 0.0 {
         return Ok("#202020".into());
     }
-    Ok(format!("#{:02x}{:02x}{:02x}", to_srgb(r / n), to_srgb(g / n), to_srgb(b / n)))
+    Ok(format!(
+        "#{:02x}{:02x}{:02x}",
+        to_srgb(r / n),
+        to_srgb(g / n),
+        to_srgb(b / n)
+    ))
 }
 
 fn prune(dir: &Path, keep: usize) {
-    let Ok(rd) = std::fs::read_dir(dir) else { return };
+    let Ok(rd) = std::fs::read_dir(dir) else {
+        return;
+    };
     let mut files: Vec<(std::time::SystemTime, PathBuf)> = rd
         .flatten()
         .filter_map(|e| Some((e.metadata().ok()?.modified().ok()?, e.path())))
@@ -313,14 +419,22 @@ mod tests {
     #[test]
     #[ignore]
     fn bench_pipeline() {
-        let Some(path) = std::env::var_os("GALERIA_BENCH").map(PathBuf::from) else { return };
+        let Some(path) = std::env::var_os("GALERIA_BENCH").map(PathBuf::from) else {
+            return;
+        };
         let t = std::time::Instant::now();
         let (img, icc) = decode(&path).unwrap();
         let (w, h) = (img.width(), img.height());
         println!("decode {w}x{h}: {:?}", t.elapsed());
         let t = std::time::Instant::now();
         let (tw, th) = target_size(w, h, 5120.0, 3414.0, true);
-        let rgb = resize_rgb(img, tw, th, fr::ResizeAlg::Convolution(fr::FilterType::Lanczos3)).unwrap();
+        let rgb = resize_rgb(
+            img,
+            tw,
+            th,
+            fr::ResizeAlg::Convolution(fr::FilterType::Lanczos3),
+        )
+        .unwrap();
         println!("resize → {tw}x{th}: {:?}", t.elapsed());
         let t = std::time::Instant::now();
         let out = encode_jpeg(&rgb, tw, th, icc, 92).unwrap();
@@ -332,8 +446,16 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("galeria-img-{}", fastrand::u64(..)));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("p.jpg");
-        image::RgbImage::from_fn(1600, 800, |x, _| image::Rgb([(x % 255) as u8, 80, 160])).save(&path).unwrap();
-        let src = Source { path: path.clone(), width: 1600, height: 800, bytes: 1, modified: 1 };
+        image::RgbImage::from_fn(1600, 800, |x, _| image::Rgb([(x % 255) as u8, 80, 160]))
+            .save(&path)
+            .unwrap();
+        let src = Source {
+            path: path.clone(),
+            width: 1600,
+            height: 800,
+            bytes: 1,
+            modified: 1,
+        };
         let (bytes, mime) = render_cached(&src, 800, 400, &dir).unwrap();
         assert_eq!(mime, "image/jpeg");
         let out = image::load_from_memory(&bytes).unwrap();

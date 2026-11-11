@@ -11,11 +11,14 @@ use std::path::{Path, PathBuf};
 use tauri::{AppHandle, WebviewWindow};
 use windows::core::{BOOL, HSTRING, PCWSTR};
 use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, WPARAM};
-use windows::Win32::System::Com::{CoCreateInstance, CoInitializeEx, CoTaskMemFree, CLSCTX_ALL, COINIT_APARTMENTTHREADED};
+use windows::Win32::System::Com::{
+    CoCreateInstance, CoInitializeEx, CoTaskMemFree, CLSCTX_ALL, COINIT_APARTMENTTHREADED,
+};
 use windows::Win32::UI::Shell::{DesktopWallpaper, IDesktopWallpaper, DWPOS_FILL, DWPOS_FIT};
 use windows::Win32::UI::WindowsAndMessaging::{
-    EnumWindows, FindWindowExW, FindWindowW, GetSystemMetrics, SendMessageTimeoutW, SetParent, SetWindowPos,
-    HWND_TOP, SMTO_NORMAL, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SWP_NOACTIVATE, SWP_SHOWWINDOW,
+    EnumWindows, FindWindowExW, FindWindowW, GetSystemMetrics, SendMessageTimeoutW, SetParent,
+    SetWindowPos, HWND_TOP, SMTO_NORMAL, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SWP_NOACTIVATE,
+    SWP_SHOWWINDOW,
 };
 
 pub fn decorate_displays(_app: &AppHandle, _displays: &mut Vec<DisplayInfo>) {}
@@ -25,9 +28,16 @@ fn hwnd_of(window: &WebviewWindow) -> Option<HWND> {
 }
 
 unsafe extern "system" fn find_worker(hwnd: HWND, lparam: LPARAM) -> BOOL {
-    let shell = FindWindowExW(Some(hwnd), None, &HSTRING::from("SHELLDLL_DefView"), PCWSTR::null());
+    let shell = FindWindowExW(
+        Some(hwnd),
+        None,
+        &HSTRING::from("SHELLDLL_DefView"),
+        PCWSTR::null(),
+    );
     if shell.map(|h| !h.is_invalid()).unwrap_or(false) {
-        if let Ok(worker) = FindWindowExW(None, Some(hwnd), &HSTRING::from("WorkerW"), PCWSTR::null()) {
+        if let Ok(worker) =
+            FindWindowExW(None, Some(hwnd), &HSTRING::from("WorkerW"), PCWSTR::null())
+        {
             *(lparam.0 as *mut HWND) = worker;
         }
     }
@@ -39,12 +49,26 @@ fn desktop_worker() -> Option<HWND> {
     unsafe {
         let progman = FindWindowW(&HSTRING::from("Progman"), PCWSTR::null()).ok()?;
         let mut _res = 0usize;
-        SendMessageTimeoutW(progman, 0x052C, WPARAM(0xD), LPARAM(0x1), SMTO_NORMAL, 1000, Some(&mut _res));
+        SendMessageTimeoutW(
+            progman,
+            0x052C,
+            WPARAM(0xD),
+            LPARAM(0x1),
+            SMTO_NORMAL,
+            1000,
+            Some(&mut _res),
+        );
         let mut worker = HWND::default();
         let _ = EnumWindows(Some(find_worker), LPARAM(&mut worker as *mut HWND as isize));
         if worker.is_invalid() {
             // Windows 11 24H2+: the WorkerW is a child of Progman.
-            worker = FindWindowExW(Some(progman), None, &HSTRING::from("WorkerW"), PCWSTR::null()).unwrap_or_default();
+            worker = FindWindowExW(
+                Some(progman),
+                None,
+                &HSTRING::from("WorkerW"),
+                PCWSTR::null(),
+            )
+            .unwrap_or_default();
         }
         (!worker.is_invalid()).then_some(worker)
     }
@@ -53,7 +77,10 @@ fn desktop_worker() -> Option<HWND> {
 fn place(hwnd: HWND, d: &DisplayInfo, parented: bool) {
     unsafe {
         let (ox, oy) = if parented {
-            (GetSystemMetrics(SM_XVIRTUALSCREEN), GetSystemMetrics(SM_YVIRTUALSCREEN))
+            (
+                GetSystemMetrics(SM_XVIRTUALSCREEN),
+                GetSystemMetrics(SM_YVIRTUALSCREEN),
+            )
         } else {
             (0, 0)
         };
@@ -116,10 +143,13 @@ pub fn set_interactive(window: &WebviewWindow, d: &DisplayInfo, interactive: boo
     });
 }
 
-fn with_wallpaper<T>(f: impl FnOnce(&IDesktopWallpaper) -> windows::core::Result<T>) -> Result<T, String> {
+fn with_wallpaper<T>(
+    f: impl FnOnce(&IDesktopWallpaper) -> windows::core::Result<T>,
+) -> Result<T, String> {
     unsafe {
         let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
-        let dw: IDesktopWallpaper = CoCreateInstance(&DesktopWallpaper, None, CLSCTX_ALL).map_err(|e| e.to_string())?;
+        let dw: IDesktopWallpaper =
+            CoCreateInstance(&DesktopWallpaper, None, CLSCTX_ALL).map_err(|e| e.to_string())?;
         f(&dw).map_err(|e| e.to_string())
     }
 }
@@ -141,7 +171,11 @@ fn monitor_id(dw: &IDesktopWallpaper, d: &DisplayInfo) -> windows::core::Result<
     }
 }
 
-pub fn set_system_wallpaper(d: &DisplayInfo, path: &Path, opts: SystemWallpaperOptions) -> Result<(), String> {
+pub fn set_system_wallpaper(
+    d: &DisplayInfo,
+    path: &Path,
+    opts: SystemWallpaperOptions,
+) -> Result<(), String> {
     with_wallpaper(|dw| unsafe {
         let (r, g, b) = opts.color;
         let to8 = |v: f64| (v.clamp(0.0, 1.0) * 255.0).round() as u32;
@@ -158,7 +192,9 @@ pub fn set_system_wallpaper(d: &DisplayInfo, path: &Path, opts: SystemWallpaperO
 
 pub fn current_system_wallpaper(d: &DisplayInfo) -> Option<PathBuf> {
     with_wallpaper(|dw| unsafe {
-        let Some(id) = monitor_id(dw, d)? else { return Ok(None) };
+        let Some(id) = monitor_id(dw, d)? else {
+            return Ok(None);
+        };
         let p = dw.GetWallpaper(&id)?;
         let s = String::from_utf16_lossy(p.as_wide());
         CoTaskMemFree(Some(p.0 as _));
@@ -176,10 +212,31 @@ pub fn restore_wallpaper_store(_backup: &Path) -> Result<bool, String> {
     Ok(false)
 }
 
-pub fn capture_webview(_window: &WebviewWindow, _path: PathBuf) -> std::sync::mpsc::Receiver<Result<(), String>> {
+pub fn capture_webview(
+    _window: &WebviewWindow,
+    _path: PathBuf,
+) -> std::sync::mpsc::Receiver<Result<(), String>> {
     let (tx, rx) = std::sync::mpsc::channel();
     let _ = tx.send(Err("window capture is only implemented on macOS".into()));
     rx
+}
+
+/// Whether apps are set to the dark theme (Settings → Personalization → Colors).
+pub fn system_dark() -> Option<bool> {
+    use windows::Win32::System::Registry::{RegGetValueW, HKEY_CURRENT_USER, RRF_RT_REG_DWORD};
+    let (mut light, mut size) = (1u32, std::mem::size_of::<u32>() as u32);
+    let status = unsafe {
+        RegGetValueW(
+            HKEY_CURRENT_USER,
+            &HSTRING::from("Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize"),
+            &HSTRING::from("AppsUseLightTheme"),
+            RRF_RT_REG_DWORD,
+            None,
+            Some(&mut light as *mut u32 as *mut core::ffi::c_void),
+            Some(&mut size),
+        )
+    };
+    status.is_ok().then_some(light == 0)
 }
 
 pub fn live_wallpaper_supported() -> bool {

@@ -1,0 +1,376 @@
+{
+  "genres": [
+    {
+      "id": "landscape",
+      "name": "Landscape",
+      "tags": [
+        "landscape"
+      ],
+      "search": "landscape",
+      "keywords": [
+        "landscape",
+        "landschap",
+        "paysage",
+        "landschaft",
+        "valley",
+        "mountain",
+        "mountains",
+        "mountainous",
+        "hills",
+        "hilly",
+        "forest",
+        "woods",
+        "wooded",
+        "meadow",
+        "meadows",
+        "countryside",
+        "waterfall",
+        "cascade",
+        "cascades",
+        "alps",
+        "dunes",
+        "heath",
+        "cliffs",
+        "gorge",
+        "pasture",
+        "wheat field",
+        "wheatfield",
+        "haystacks",
+        "campagna"
+      ]
+    },
+    {
+      "id": "seascape",
+      "name": "Seascape & Marine",
+      "tags": [
+        "seascape"
+      ],
+      "search": "seascape",
+      "keywords": [
+        "seascape",
+        "sea",
+        "marine",
+        "ships",
+        "ship",
+        "shipping",
+        "harbor",
+        "harbour",
+        "coast",
+        "coastal",
+        "beach",
+        "shore",
+        "seashore",
+        "waves",
+        "fleet",
+        "sailing",
+        "sailboats",
+        "frigate",
+        "naval",
+        "shipwreck",
+        "bay",
+        "port",
+        "zeegezicht"
+      ]
+    },
+    {
+      "id": "river-lake",
+      "name": "Rivers & Lakes",
+      "tags": [
+        "river-lake"
+      ],
+      "search": "river",
+      "keywords": [
+        "river",
+        "lake",
+        "pond",
+        "stream",
+        "brook",
+        "riverbank",
+        "seine",
+        "thames",
+        "rhine",
+        "ferry",
+        "rivier",
+        "lagoon",
+        "fjord"
+      ]
+    },
+    {
+      "id": "cityscape",
+      "name": "Cityscape & Architecture",
+      "tags": [
+        "cityscape"
+      ],
+      "search": "city view",
+      "keywords": [
+        "city",
+        "town",
+        "village",
+        "street",
+        "square",
+        "cathedral",
+        "canal",
+        "venice",
+        "ruins",
+        "palace",
+        "castle",
+        "bridge",
+        "boulevard",
+        "piazza",
+        "stadsgezicht",
+        "townscape",
+        "cityscape",
+        "courtyard",
+        "market square"
+      ]
+    },
+    {
+      "id": "winter",
+      "name": "Winter",
+      "tags": [
+        "winter"
+      ],
+      "search": "winter",
+      "keywords": [
+        "winter",
+        "snow",
+        "snowy",
+        "ice",
+        "skating",
+        "skaters",
+        "frozen",
+        "frost",
+        "sleigh"
+      ]
+    },
+    {
+      "id": "night-sunset",
+      "name": "Night & Sunset",
+      "tags": [
+        "night-sunset"
+      ],
+      "search": "sunset",
+      "keywords": [
+        "night",
+        "moonlight",
+        "moonlit",
+        "moonrise",
+        "sunset",
+        "sunrise",
+        "dusk",
+        "twilight",
+        "evening",
+        "dawn",
+        "nocturne"
+      ]
+    },
+    {
+      "id": "garden-flowers",
+      "name": "Gardens & Flowers",
+      "tags": [
+        "garden-flowers"
+      ],
+      "search": "garden",
+      "keywords": [
+        "garden",
+        "gardens",
+        "flowers",
+        "flower",
+        "bouquet",
+        "roses",
+        "lilies",
+        "orchard",
+        "blossom",
+        "irises",
+        "tulips",
+        "poppies"
+      ]
+    },
+    {
+      "id": "still-life",
+      "name": "Still Life",
+      "tags": [
+        "still-life"
+      ],
+      "search": "still life",
+      "keywords": [
+        "still life",
+        "stilleven",
+        "nature morte",
+        "stillleben"
+      ]
+    },
+    {
+      "id": "figures",
+      "name": "Figures & Everyday Life",
+      "tags": [
+        "figures-genre"
+      ],
+      "search": "genre scene",
+      "keywords": [
+        "peasants",
+        "market",
+        "dance",
+        "dancers",
+        "feast",
+        "wedding",
+        "tavern",
+        "family",
+        "children",
+        "harvest",
+        "harvesters",
+        "concert",
+        "lesson",
+        "kitchen",
+        "merry company",
+        "fishermen",
+        "washerwomen",
+        "ballet"
+      ]
+    },
+    {
+      "id": "portrait",
+      "name": "Portrait",
+      "tags": [
+        "portrait"
+      ],
+      "search": "portrait",
+      "keywords": [
+        "portrait",
+        "self-portrait",
+        "portret",
+        "bildnis",
+        "zelfportret"
+      ]
+    },
+    {
+      "id": "religious",
+      "name": "Religious",
+      "tags": [
+        "religious",
+        "saints",
+        "theotokos",
+        "deesis",
+        "last-judgment"
+      ],
+      "search": "saint",
+      "keywords": [
+        "madonna",
+        "virgin",
+        "christ",
+        "saint",
+        "holy family",
+        "adoration",
+        "crucifixion",
+        "annunciation",
+        "nativity",
+        "baptism",
+        "apostle",
+        "resurrection",
+        "lamentation",
+        "pieta",
+        "magi",
+        "last supper",
+        "last judgment",
+        "flight into egypt"
+      ]
+    },
+    {
+      "id": "orthodox",
+      "name": "Orthodox & Icons",
+      "tags": [
+        "orthodox",
+        "icon",
+        "byzantine"
+      ],
+      "kinds": [
+        "icon",
+        "fresco",
+        "mosaic"
+      ],
+      "categories": [
+        "orthodox"
+      ],
+      "search": "icon",
+      "keywords": [
+        "icon",
+        "theotokos",
+        "pantocrator",
+        "deesis",
+        "iconostasis"
+      ]
+    },
+    {
+      "id": "mythology-history",
+      "name": "Mythology & History",
+      "tags": [
+        "mythology",
+        "history"
+      ],
+      "search": "mythology",
+      "keywords": [
+        "venus",
+        "apollo",
+        "diana",
+        "bacchus",
+        "jupiter",
+        "hercules",
+        "nymph",
+        "nymphs",
+        "battle",
+        "triumph",
+        "siege",
+        "allegory",
+        "cupid",
+        "ulysses",
+        "aeneas"
+      ]
+    },
+    {
+      "id": "animals",
+      "name": "Animals",
+      "tags": [
+        "animals"
+      ],
+      "search": "animals",
+      "keywords": [
+        "horse",
+        "horses",
+        "cattle",
+        "cows",
+        "sheep",
+        "dog",
+        "dogs",
+        "hunt",
+        "hunting",
+        "lion",
+        "tiger",
+        "deer",
+        "bull",
+        "herd",
+        "flock"
+      ]
+    },
+    {
+      "id": "east-asian",
+      "name": "East Asian",
+      "tags": [
+        "east-asian"
+      ],
+      "search": "handscroll",
+      "keywords": [
+        "handscroll",
+        "hanging scroll",
+        "ink on silk",
+        "ink and color on silk",
+        "ink and colour on silk",
+        "edo period",
+        "ming dynasty",
+        "qing dynasty",
+        "song dynasty",
+        "joseon",
+        "folding screen"
+      ]
+    }
+  ]
+}

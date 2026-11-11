@@ -92,7 +92,10 @@ impl Enricher {
     }
 
     pub async fn enrich(&self, job: &Job, artists: &mut HashMap<String, ArtistInfo>) -> Enrichment {
-        let mut e = Enrichment { fetched_at: now(), ..Default::default() };
+        let mut e = Enrichment {
+            fetched_at: now(),
+            ..Default::default()
+        };
         let source = job.source.as_deref().unwrap_or("");
         let sid = job.source_id.clone().unwrap_or_default();
         let mut creator_qid: Option<String> = None;
@@ -105,7 +108,11 @@ impl Enricher {
                 }
             }
             "rijks" | "rijksmuseum" => {
-                if let Some(page) = job.source_page.as_deref().filter(|p| p.contains("id.rijksmuseum.nl")) {
+                if let Some(page) = job
+                    .source_page
+                    .as_deref()
+                    .filter(|p| p.contains("id.rijksmuseum.nl"))
+                {
                     if let Ok(q) = self.rijks(page, &mut e).await {
                         any_ok = true;
                         creator_qid = q;
@@ -117,18 +124,29 @@ impl Enricher {
 
         // Find the work on Wikidata through the museum's identifiers.
         let ident = match source {
-            "nga" if !sid.is_empty() => Some(format!("?item wdt:P4683 \"{}\" .", sparql_escape(&sid))),
+            "nga" if !sid.is_empty() => {
+                Some(format!("?item wdt:P4683 \"{}\" .", sparql_escape(&sid)))
+            }
             "cma" | "cleveland" => e
                 .accession
                 .clone()
                 .or(Some(sid.clone()))
                 .filter(|s| !s.is_empty())
-                .map(|acc| format!("?item wdt:P217 \"{}\" ; wdt:P195 wd:Q657415 .", sparql_escape(&acc))),
-            "rijks" | "rijksmuseum" => e
-                .accession
-                .clone()
-                .map(|acc| format!("?item wdt:P217 \"{}\" ; wdt:P195 wd:Q190804 .", sparql_escape(&acc))),
-            "met" if !sid.is_empty() => Some(format!("?item wdt:P3634 \"{}\" .", sparql_escape(&sid))),
+                .map(|acc| {
+                    format!(
+                        "?item wdt:P217 \"{}\" ; wdt:P195 wd:Q657415 .",
+                        sparql_escape(&acc)
+                    )
+                }),
+            "rijks" | "rijksmuseum" => e.accession.clone().map(|acc| {
+                format!(
+                    "?item wdt:P217 \"{}\" ; wdt:P195 wd:Q190804 .",
+                    sparql_escape(&acc)
+                )
+            }),
+            "met" if !sid.is_empty() => {
+                Some(format!("?item wdt:P3634 \"{}\" .", sparql_escape(&sid)))
+            }
             _ => None,
         };
         if let Some(ident) = ident {
@@ -146,7 +164,8 @@ impl Enricher {
                 if let Some(article) = w.article {
                     e.wikipedia_url = Some(article.clone());
                     // Prefer an English museum text; fall back to Wikipedia; Dutch is the last resort.
-                    let needs_text = e.description.is_none() || e.description_lang.as_deref() != Some("en");
+                    let needs_text =
+                        e.description.is_none() || e.description_lang.as_deref() != Some("en");
                     if needs_text {
                         if let Ok(Some(extract)) = self.wikipedia_summary(&article).await {
                             e.description = Some(extract);
@@ -162,7 +181,9 @@ impl Enricher {
         // Artist nationality + life dates, cached per artist.
         if e.artist_bio.is_none() {
             if let Some(name) = job.artist.as_deref().filter(|n| is_named_artist(n)) {
-                let cached = artists.get(name).filter(|a| now().saturating_sub(a.fetched_at) < REFRESH_AFTER);
+                let cached = artists
+                    .get(name)
+                    .filter(|a| now().saturating_sub(a.fetched_at) < REFRESH_AFTER);
                 if let Some(a) = cached {
                     e.artist_bio = a.bio.clone();
                 } else {
@@ -197,7 +218,10 @@ impl Enricher {
     }
 
     async fn cleveland(&self, id: &str, e: &mut Enrichment) -> Result<(), String> {
-        let url = format!("https://openaccess-api.clevelandart.org/api/artworks/{}", urlenc(id));
+        let url = format!(
+            "https://openaccess-api.clevelandart.org/api/artworks/{}",
+            urlenc(id)
+        );
         let v = self.get_json(&url, "application/json").await?;
         let d = &v["data"];
         let s = |k: &str| non_empty(d[k].as_str().map(strip_html));
@@ -212,8 +236,16 @@ impl Enricher {
         e.accession = s("accession_number");
         e.technique = s("technique");
         e.measurements = s("measurements");
-        e.culture = d["culture"].as_array().and_then(|a| a.first()).and_then(|c| c.as_str()).map(collapse_ws);
-        if let Some(desc) = d["creators"].as_array().and_then(|a| a.first()).and_then(|c| c["description"].as_str()) {
+        e.culture = d["culture"]
+            .as_array()
+            .and_then(|a| a.first())
+            .and_then(|c| c.as_str())
+            .map(collapse_ws);
+        if let Some(desc) = d["creators"]
+            .as_array()
+            .and_then(|a| a.first())
+            .and_then(|c| c["description"].as_str())
+        {
             e.artist_bio = bio_from_parenthetical(desc);
         }
         Ok(())
@@ -230,17 +262,25 @@ impl Enricher {
 
         let v = self.get_json(page, "application/ld+json").await?;
         let has_class = |node: &Value, id: &str| {
-            node["classified_as"].as_array().is_some_and(|a| a.iter().any(|c| c["id"].as_str() == Some(id)))
+            node["classified_as"]
+                .as_array()
+                .is_some_and(|a| a.iter().any(|c| c["id"].as_str() == Some(id)))
         };
         fn lang_of(node: &Value) -> Option<&str> {
-            node["language"].as_array().and_then(|a| a.first()).and_then(|l| l["id"].as_str())
+            node["language"]
+                .as_array()
+                .and_then(|a| a.first())
+                .and_then(|l| l["id"].as_str())
         }
 
         let mut desc_en = None;
         let mut desc_nl = None;
         let mut dims = Vec::new();
         for r in v["referred_to_by"].as_array().into_iter().flatten() {
-            let content = r["content"].as_str().map(collapse_ws).filter(|s| !s.is_empty());
+            let content = r["content"]
+                .as_str()
+                .map(collapse_ws)
+                .filter(|s| !s.is_empty());
             let Some(content) = content else { continue };
             if has_class(r, DESCRIPTION) {
                 match lang_of(r) {
@@ -248,7 +288,10 @@ impl Enricher {
                     Some(NL) => desc_nl = Some(content),
                     _ => {}
                 }
-            } else if has_class(r, DIMENSIONS) && lang_of(r) == Some(EN) && !content.starts_with("depth") {
+            } else if has_class(r, DIMENSIONS)
+                && lang_of(r) == Some(EN)
+                && !content.starts_with("depth")
+            {
                 dims.push(content);
             }
         }
@@ -283,7 +326,10 @@ impl Enricher {
         'outer: for part in v["produced_by"]["part"].as_array().into_iter().flatten() {
             for who in part["carried_out_by"].as_array().into_iter().flatten() {
                 for eq in who["equivalent"].as_array().into_iter().flatten() {
-                    if let Some(id) = eq["id"].as_str().and_then(|s| s.strip_prefix("http://www.wikidata.org/entity/")) {
+                    if let Some(id) = eq["id"]
+                        .as_str()
+                        .and_then(|s| s.strip_prefix("http://www.wikidata.org/entity/"))
+                    {
                         qid = Some(id.to_string());
                         break 'outer;
                     }
@@ -306,7 +352,10 @@ impl Enricher {
             return Err(format!("wikidata: HTTP {}", res.status()));
         }
         let v: Value = res.json().await.map_err(|e| e.to_string())?;
-        Ok(v["results"]["bindings"].as_array().cloned().unwrap_or_default())
+        Ok(v["results"]["bindings"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default())
     }
 
     async fn wikidata_work(&self, ident: &str) -> Result<WorkInfo, String> {
@@ -331,7 +380,12 @@ impl Enricher {
             .find_map(|r| val(r, "creator"))
             .filter(|u| u.contains("/entity/Q"))
             .map(|u| qid_of(&u));
-        Ok(WorkInfo { item, article, creator, bio: bio_from_rows(&rows) })
+        Ok(WorkInfo {
+            item,
+            article,
+            creator,
+            bio: bio_from_rows(&rows),
+        })
     }
 
     async fn artist_by_qid(&self, qid: &str) -> Result<ArtistInfo, String> {
@@ -342,7 +396,11 @@ impl Enricher {
 }} LIMIT 20"#
         );
         let rows = self.sparql(&q).await?;
-        Ok(ArtistInfo { bio: bio_from_rows(&rows), wikidata_id: Some(qid.to_string()), fetched_at: now() })
+        Ok(ArtistInfo {
+            bio: bio_from_rows(&rows),
+            wikidata_id: Some(qid.to_string()),
+            fetched_at: now(),
+        })
     }
 
     async fn artist_by_name(&self, name: &str) -> Result<ArtistInfo, String> {
@@ -361,14 +419,28 @@ impl Enricher {
             .await
             .map_err(|e| e.to_string())?;
         let v: Value = res.json().await.map_err(|e| e.to_string())?;
-        const ARTISTIC: &[&str] = &["painter", "artist", "draughtsman", "draftsman", "printmaker", "illustrator", "engraver", "watercolorist", "sculptor"];
+        const ARTISTIC: &[&str] = &[
+            "painter",
+            "artist",
+            "draughtsman",
+            "draftsman",
+            "printmaker",
+            "illustrator",
+            "engraver",
+            "watercolorist",
+            "sculptor",
+        ];
         let hit = v["search"].as_array().into_iter().flatten().find(|r| {
             let d = r["description"].as_str().unwrap_or("").to_lowercase();
             ARTISTIC.iter().any(|w| d.contains(w))
         });
         match hit.and_then(|h| h["id"].as_str()) {
             Some(qid) => self.artist_by_qid(qid).await,
-            None => Ok(ArtistInfo { bio: None, wikidata_id: None, fetched_at: now() }),
+            None => Ok(ArtistInfo {
+                bio: None,
+                wikidata_id: None,
+                fetched_at: now(),
+            }),
         }
     }
 
@@ -427,13 +499,23 @@ fn year_of(date: &str) -> Option<String> {
         None => (false, date.strip_prefix('+').unwrap_or(date)),
     };
     let y: i64 = rest.split('-').next()?.parse().ok()?;
-    Some(if neg { format!("{y} BCE") } else { y.to_string() })
+    Some(if neg {
+        format!("{y} BCE")
+    } else {
+        y.to_string()
+    })
 }
 
 fn bio_from_rows(rows: &[Value]) -> Option<String> {
     let val = |r: &Value, k: &str| r[k]["value"].as_str().map(str::to_string);
-    let birth = rows.iter().find_map(|r| val(r, "birth")).and_then(|d| year_of(&d));
-    let death = rows.iter().find_map(|r| val(r, "death")).and_then(|d| year_of(&d));
+    let birth = rows
+        .iter()
+        .find_map(|r| val(r, "birth"))
+        .and_then(|d| year_of(&d));
+    let death = rows
+        .iter()
+        .find_map(|r| val(r, "death"))
+        .and_then(|d| year_of(&d));
     // Several demonyms are common ("American", "Americans"); prefer the adjective.
     let mut demonyms: Vec<String> = rows.iter().filter_map(|r| val(r, "demonym")).collect();
     demonyms.sort_by_key(|d| (d.ends_with('s') && !d.ends_with("ss"), d.len()));
@@ -459,7 +541,10 @@ mod tests {
 
     #[test]
     fn parses_cleveland_bio() {
-        assert_eq!(bio_from_parenthetical("Claude Monet (French, 1840-1926)").as_deref(), Some("French, 1840-1926"));
+        assert_eq!(
+            bio_from_parenthetical("Claude Monet (French, 1840-1926)").as_deref(),
+            Some("French, 1840-1926")
+        );
         assert_eq!(bio_from_parenthetical("Anonymous"), None);
     }
 
@@ -469,6 +554,9 @@ mod tests {
             json!({"birth": {"value": "1816-03-22T00:00:00Z"}, "death": {"value": "1872-12-14T00:00:00Z"}, "demonym": {"value": "Americans"}}),
             json!({"birth": {"value": "1816-03-22T00:00:00Z"}, "demonym": {"value": "American"}}),
         ];
-        assert_eq!(bio_from_rows(&rows).as_deref(), Some("American, 1816\u{2013}1872"));
+        assert_eq!(
+            bio_from_rows(&rows).as_deref(),
+            Some("American, 1816\u{2013}1872")
+        );
     }
 }

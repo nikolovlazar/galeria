@@ -9,7 +9,9 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Component, Path, PathBuf};
 
 pub const MANIFEST: &str = "manifest.json";
-const IMAGE_EXTS: &[&str] = &["jpg", "jpeg", "png", "webp", "tif", "tiff", "gif", "avif", "heic", "bmp"];
+const IMAGE_EXTS: &[&str] = &[
+    "jpg", "jpeg", "png", "webp", "tif", "tiff", "gif", "avif", "heic", "bmp",
+];
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -31,11 +33,18 @@ pub struct Painting {
     pub credit_line: Option<String>,
     pub accession: Option<String>,
     pub license: Option<String>,
+    /// The image's license requires naming its author (CC BY, CC BY-SA).
+    pub attribution_required: bool,
     pub source: Option<String>,
     pub source_id: Option<String>,
     pub source_page: Option<String>,
     pub tags: Vec<String>,
     pub kind: Option<String>,
+    pub category: Option<String>,
+    /// Genre ids (see `genres.rs`), derived from tags/kind/category or the title.
+    pub genres: Vec<String>,
+    /// Mean luma 0–255, when the manifest states it.
+    pub brightness: Option<f64>,
     pub width: u32,
     pub height: u32,
     pub bytes: u64,
@@ -151,7 +160,11 @@ pub fn load(root: &Path, dims: &mut DimCache) -> Library {
             } else {
                 format!("No {MANIFEST} found in this folder")
             });
-            return Library { root: root.to_path_buf(), report, ..Default::default() };
+            return Library {
+                root: root.to_path_buf(),
+                report,
+                ..Default::default()
+            };
         }
     };
     report.manifest_found = true;
@@ -159,7 +172,11 @@ pub fn load(root: &Path, dims: &mut DimCache) -> Library {
         Ok(v) => v,
         Err(e) => {
             report.error = Some(format!("{MANIFEST} is not valid JSON: {e}"));
-            return Library { root: root.to_path_buf(), report, ..Default::default() };
+            return Library {
+                root: root.to_path_buf(),
+                report,
+                ..Default::default()
+            };
         }
     };
 
@@ -169,20 +186,31 @@ pub fn load(root: &Path, dims: &mut DimCache) -> Library {
             let items = ["items", "paintings", "artworks", "works"]
                 .iter()
                 .find_map(|k| o.get(*k).and_then(|v| v.as_array()).cloned());
-            let generated = o.get("generated").and_then(|v| v.as_str()).map(str::to_string);
+            let generated = o
+                .get("generated")
+                .and_then(|v| v.as_str())
+                .map(str::to_string);
             match items {
                 Some(items) => (items, generated),
                 None => {
                     report.error = Some(format!(
                         "{MANIFEST} must be an array or contain an \"items\" array"
                     ));
-                    return Library { root: root.to_path_buf(), report, ..Default::default() };
+                    return Library {
+                        root: root.to_path_buf(),
+                        report,
+                        ..Default::default()
+                    };
                 }
             }
         }
         _ => {
             report.error = Some(format!("{MANIFEST} must be an array or an object"));
-            return Library { root: root.to_path_buf(), report, ..Default::default() };
+            return Library {
+                root: root.to_path_buf(),
+                report,
+                ..Default::default()
+            };
         }
     };
     report.generated = generated;
@@ -195,7 +223,10 @@ pub fn load(root: &Path, dims: &mut DimCache) -> Library {
 
     for (n, item) in items.iter().enumerate() {
         let Some(obj) = item.as_object() else {
-            report.invalid.push(Issue { file: format!("entry #{}", n + 1), problem: "not an object".into() });
+            report.invalid.push(Issue {
+                file: format!("entry #{}", n + 1),
+                problem: "not an object".into(),
+            });
             continue;
         };
         let Some(file) = str_field(obj, &["file", "path", "filename", "image", "src"]) else {
@@ -218,11 +249,17 @@ pub fn load(root: &Path, dims: &mut DimCache) -> Library {
         let meta = match std::fs::metadata(&path) {
             Ok(m) if m.is_file() => m,
             Ok(_) => {
-                report.invalid.push(Issue { file: file.clone(), problem: "not a file".into() });
+                report.invalid.push(Issue {
+                    file: file.clone(),
+                    problem: "not a file".into(),
+                });
                 continue;
             }
             Err(_) => {
-                report.missing.push(Issue { file: file.clone(), problem: "file not found".into() });
+                report.missing.push(Issue {
+                    file: file.clone(),
+                    problem: "file not found".into(),
+                });
                 continue;
             }
         };
@@ -246,14 +283,20 @@ pub fn load(root: &Path, dims: &mut DimCache) -> Library {
         let (w, h) = match dims.dims(&path, len, mtime) {
             Ok(d) => d,
             Err(problem) => {
-                report.invalid.push(Issue { file: file.clone(), problem });
+                report.invalid.push(Issue {
+                    file: file.clone(),
+                    problem,
+                });
                 continue;
             }
         };
 
         let id = str_field(obj, &["id"]).unwrap_or_else(|| file.clone());
         if !seen_ids.insert(id.clone()) {
-            report.duplicates.push(Issue { file: file.clone(), problem: format!("duplicate id \"{id}\"") });
+            report.duplicates.push(Issue {
+                file: file.clone(),
+                problem: format!("duplicate id \"{id}\""),
+            });
             continue;
         }
 
@@ -264,25 +307,68 @@ pub fn load(root: &Path, dims: &mut DimCache) -> Library {
             path,
             title,
             artist: str_field(obj, &["artist", "painter", "creator", "author", "maker"]),
-            artist_bio: str_field(obj, &["artist_bio", "artistBio", "artist_display", "artistDisplay"]),
+            artist_bio: str_field(
+                obj,
+                &["artist_bio", "artistBio", "artist_display", "artistDisplay"],
+            ),
             date: str_field(obj, &["date", "year", "period", "created", "dated"]),
             medium: str_field(obj, &["medium", "technique", "materials"]),
             dimensions: str_field(obj, &["dimensions", "measurements", "size"]),
             description: str_field(obj, &["description", "desc", "about", "summary", "label"]),
             museum: str_field(obj, &["museum", "collection", "institution", "repository"]),
-            credit: str_field(obj, &["credit", "image_credit", "imageCredit", "attribution", "photo_credit"]),
-            credit_line: str_field(obj, &["credit_line", "creditLine", "creditline", "acquisition"]),
-            accession: str_field(obj, &["accession", "accession_number", "accessionNumber", "object_number", "objectNumber", "inventory"]),
+            credit: str_field(
+                obj,
+                &[
+                    "credit",
+                    "image_credit",
+                    "imageCredit",
+                    "attribution",
+                    "photo_credit",
+                ],
+            ),
+            credit_line: str_field(
+                obj,
+                &["credit_line", "creditLine", "creditline", "acquisition"],
+            ),
+            accession: str_field(
+                obj,
+                &[
+                    "accession",
+                    "accession_number",
+                    "accessionNumber",
+                    "object_number",
+                    "objectNumber",
+                    "inventory",
+                ],
+            ),
             license: str_field(obj, &["license", "licence", "rights"]),
+            attribution_required: obj
+                .get("attribution_required")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false)
+                || str_field(obj, &["license", "licence", "rights"]).is_some_and(|l| {
+                    let l = l.to_lowercase().replace('-', " ");
+                    l.starts_with("cc by") || l.starts_with("creative commons attribution")
+                }),
             source: str_field(obj, &["source"]),
             source_id: str_field(obj, &["source_id", "sourceId", "object_id", "objectId"]),
             source_page: str_field(obj, &["source_page", "sourcePage", "url", "link", "page"]),
             tags: obj
                 .get("tags")
                 .and_then(|t| t.as_array())
-                .map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|v| v.as_str().map(str::to_string))
+                        .collect()
+                })
                 .unwrap_or_default(),
             kind: str_field(obj, &["kind", "type", "classification"]),
+            category: str_field(obj, &["category"]),
+            genres: Vec::new(),
+            brightness: obj
+                .get("brightness")
+                .and_then(|v| v.as_f64())
+                .filter(|b| (0.0..=255.0).contains(b)),
             width: w,
             height: h,
             bytes: len,
@@ -290,22 +376,96 @@ pub fn load(root: &Path, dims: &mut DimCache) -> Library {
             extra: Map::new(),
         };
         const KNOWN: &[&str] = &[
-            "file", "path", "filename", "image", "src", "id", "title", "name", "artist", "painter", "creator",
-            "author", "maker", "artist_bio", "artistBio", "artist_display", "artistDisplay", "date", "year",
-            "period", "created", "dated", "medium", "technique", "materials", "dimensions", "measurements",
-            "size", "description", "desc", "about", "summary", "label", "museum", "collection", "institution",
-            "repository", "credit", "image_credit", "imageCredit", "attribution", "photo_credit", "credit_line",
-            "creditLine", "creditline", "acquisition", "accession", "accession_number", "accessionNumber",
-            "object_number", "objectNumber", "inventory", "license", "licence", "rights", "source", "source_id",
-            "sourceId", "object_id", "objectId", "source_page", "sourcePage", "url", "link", "page", "tags",
-            "kind", "type", "classification", "width", "height", "aspect", "orientation", "megapixels", "bytes",
-            "download_url", "added",
+            "file",
+            "path",
+            "filename",
+            "image",
+            "src",
+            "id",
+            "title",
+            "name",
+            "artist",
+            "painter",
+            "creator",
+            "author",
+            "maker",
+            "artist_bio",
+            "artistBio",
+            "artist_display",
+            "artistDisplay",
+            "date",
+            "year",
+            "period",
+            "created",
+            "dated",
+            "medium",
+            "technique",
+            "materials",
+            "dimensions",
+            "measurements",
+            "size",
+            "description",
+            "desc",
+            "about",
+            "summary",
+            "label",
+            "museum",
+            "collection",
+            "institution",
+            "repository",
+            "credit",
+            "image_credit",
+            "imageCredit",
+            "attribution",
+            "photo_credit",
+            "credit_line",
+            "creditLine",
+            "creditline",
+            "acquisition",
+            "accession",
+            "accession_number",
+            "accessionNumber",
+            "object_number",
+            "objectNumber",
+            "inventory",
+            "license",
+            "licence",
+            "rights",
+            "source",
+            "source_id",
+            "sourceId",
+            "object_id",
+            "objectId",
+            "source_page",
+            "sourcePage",
+            "url",
+            "link",
+            "page",
+            "tags",
+            "kind",
+            "type",
+            "classification",
+            "width",
+            "height",
+            "aspect",
+            "orientation",
+            "megapixels",
+            "bytes",
+            "download_url",
+            "added",
+            "category",
         ];
         for (k, v) in obj {
             if !KNOWN.contains(&k.as_str()) && (v.is_string() || v.is_number() || v.is_boolean()) {
                 p.extra.insert(k.clone(), v.clone());
             }
         }
+        p.genres = crate::genres::classify(
+            &p.tags,
+            p.kind.as_deref(),
+            p.category.as_deref(),
+            &[p.title.as_str(), p.medium.as_deref().unwrap_or("")],
+        );
         paintings.push(p);
     }
 
@@ -324,15 +484,26 @@ pub fn load(root: &Path, dims: &mut DimCache) -> Library {
     report.unindexed = unindexed;
     report.valid = paintings.len();
 
-    let index = paintings.iter().enumerate().map(|(i, p)| (p.id.clone(), i)).collect();
-    Library { root: root.to_path_buf(), paintings, index, report }
+    let index = paintings
+        .iter()
+        .enumerate()
+        .map(|(i, p)| (p.id.clone(), i))
+        .collect();
+    Library {
+        root: root.to_path_buf(),
+        paintings,
+        index,
+        report,
+    }
 }
 
 fn collect_images(dir: &Path, depth: usize, f: &mut dyn FnMut(&Path)) {
     if depth > 3 {
         return;
     }
-    let Ok(rd) = std::fs::read_dir(dir) else { return };
+    let Ok(rd) = std::fs::read_dir(dir) else {
+        return;
+    };
     for entry in rd.flatten() {
         let p = entry.path();
         let name = entry.file_name();
@@ -367,7 +538,10 @@ fn str_field(obj: &Map<String, Value>, keys: &[&str]) -> Option<String> {
 
 /// `claude-monet__water-lilies.jpg` → `Water Lilies`
 fn title_from_file(file: &str) -> String {
-    let stem = Path::new(file).file_stem().and_then(|s| s.to_str()).unwrap_or(file);
+    let stem = Path::new(file)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or(file);
     let stem = stem.rsplit("__").next().unwrap_or(stem);
     stem.split(['-', '_', ' '])
         .filter(|w| !w.is_empty())
@@ -431,8 +605,14 @@ mod tests {
 
     #[test]
     fn titles_from_file_names() {
-        assert_eq!(title_from_file("claude-monet__water-lilies.jpg"), "Water Lilies");
-        assert_eq!(title_from_file("sub/the_night_watch.png"), "The Night Watch");
+        assert_eq!(
+            title_from_file("claude-monet__water-lilies.jpg"),
+            "Water Lilies"
+        );
+        assert_eq!(
+            title_from_file("sub/the_night_watch.png"),
+            "The Night Watch"
+        );
     }
 
     #[test]

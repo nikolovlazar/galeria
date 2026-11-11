@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import type { Colors, DeepPartial, LibraryView, Settings, Snapshot } from "./types";
+import type { Candidate, Catalogue, CatalogProgress, Colors, DeepPartial, DiscoverPage, DiscoverQuery, Job, LibraryView, Settings, Snapshot } from "./types";
 
 const isWindows = navigator.userAgent.includes("Windows");
 const BASE = isWindows ? "http://galeria.localhost/" : "galeria://localhost/";
@@ -40,12 +40,78 @@ export const api = {
   restoreOriginalWallpaper: () => invoke<void>("restore_original_wallpaper"),
   refreshEnrichment: (id?: string) => invoke<void>("refresh_enrichment", { id }),
   clearImageCache: () => invoke<number>("clear_image_cache"),
+  /** Licensing rules, genres and local catalogue status. */
+  catalogue: () => invoke<Catalogue>("get_catalogue"),
+  discover: (query: DiscoverQuery) => invoke<DiscoverPage>("discover_search", { query }),
+  /** Download the open dataset a source is searched from (National Gallery of Art). */
+  prepareCatalog: (source: string) => invoke<number>("discover_prepare", { source }),
+  download: (items: Candidate[]) =>
+    invoke<number>("download_start", {
+      items: items.map((c) => ({ source: c.source, locator: c.locator, id: c.id, title: c.title, artist: c.artist, thumbUrl: c.thumbUrl })),
+    }),
+  cancelDownload: (id?: string) => invoke<void>("download_cancel", { id }),
+  clearDownloads: () => invoke<void>("download_clear"),
+  downloads: () => invoke<Job[]>("get_downloads"),
+  /** Drop manifest entries whose file is gone. */
+  cleanupManifest: () => invoke<number>("manifest_cleanup"),
+  reportTheme: (dark: boolean) => invoke<void>("report_theme", { dark }),
   quit: () => invoke<void>("quit"),
   log: (message: string, level: "info" | "warn" | "error" = "info") => invoke<void>("frontend_log", { level, message }),
 };
 
 export function onSnapshot(cb: (s: Snapshot) => void): Promise<UnlistenFn> {
   return listen<Snapshot>("snapshot", (e) => cb(e.payload));
+}
+
+export function onDownloads(cb: (jobs: Job[]) => void): Promise<UnlistenFn> {
+  return listen<Job[]>("downloads", (e) => cb(e.payload));
+}
+
+export function onCatalogProgress(cb: (p: CatalogProgress) => void): Promise<UnlistenFn> {
+  return listen<CatalogProgress>("catalog-progress", (e) => cb(e.payload));
+}
+
+/** Tell the core when the system switches between light and dark (it also checks by itself). */
+export function watchSystemTheme() {
+  const mq = matchMedia("(prefers-color-scheme: dark)");
+  const report = () => void api.reportTheme(mq.matches).catch(() => {});
+  mq.addEventListener("change", report);
+  report();
+}
+
+/**
+ * `galeria --ui click:<selector>` / `--ui type:<selector>=<text>` / `--ui key:<selector>=Enter`:
+ * drive the settings window from the command line (testing without a mouse).
+ */
+export function installDebugUi() {
+  void listen<string>("debug-ui", (e) => {
+    const [kind, ...rest] = e.payload.split(":");
+    const arg = rest.join(":");
+    if (kind === "click") {
+      const el = document.querySelector<HTMLElement>(arg);
+      void api.log(`ui click ${arg}: ${el ? "ok" : "not found"}`);
+      el?.click();
+    } else if (kind === "type" || kind === "key") {
+      // The selector may itself contain "=" (`[data-test=x]=text`).
+      const eq = arg.includes("]=") ? arg.lastIndexOf("]=") + 1 : arg.indexOf("=");
+      const sel = arg.slice(0, eq);
+      const text = arg.slice(eq + 1);
+      const el = document.querySelector<HTMLInputElement>(sel);
+      void api.log(`ui ${kind} ${sel}: ${el ? "ok" : "not found"}`);
+      if (!el) return;
+      if (kind === "type") {
+        // React tracks the value through the native setter.
+        Object.getOwnPropertyDescriptor(Object.getPrototypeOf(el), "value")?.set?.call(el, text);
+        el.dispatchEvent(new Event("input", { bubbles: true }));
+        el.dispatchEvent(new Event("change", { bubbles: true }));
+      } else {
+        el.dispatchEvent(new KeyboardEvent("keydown", { key: text, bubbles: true }));
+      }
+    } else if (kind === "dump") {
+      const els = [...document.querySelectorAll<HTMLElement>(arg || "[data-test]")];
+      void api.log(`ui dump ${arg}: ${els.length} → ${els.slice(0, 40).map((x) => (x.dataset.test ?? x.className) + "=" + (x.innerText || "").replace(/\s+/g, " ").slice(0, 80)).join(" | ")}`);
+    }
+  });
 }
 
 /** Inject (or update) the user's custom plate styles. */

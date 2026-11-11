@@ -62,11 +62,15 @@ export function renderPlate(p: Painting, s: PlateSettings): HTMLElement {
     footer.append(m);
   }
   if (f.accession && p.accession) footer.append(el("div", "plate-accession", p.accession));
-  if (f.credit && p.credit) {
+  // An attribution license (CC BY, CC BY-SA) is honoured even when the credit
+  // and license details are switched off: the author and license always show.
+  const owed = p.attributionRequired;
+  if ((f.credit || owed) && p.credit) {
     const redundant = f.museum && p.museum && normalize(p.credit) === normalize(p.museum);
     if (!redundant) footer.append(el("div", "plate-credit", p.credit));
   }
-  if (f.license && p.license) footer.append(el("div", "plate-license", p.license));
+  const creditNamesLicense = !!p.credit && /\bCC[ -]BY/i.test(p.credit);
+  if (p.license && (f.license || (owed && !creditNamesLicense))) footer.append(el("div", "plate-license", p.license));
   if (showDescription && p.descriptionSource) {
     const lang = p.descriptionLang && p.descriptionLang !== "en" ? ` (${langName(p.descriptionLang)})` : "";
     const lic = p.descriptionLicense ? `, ${p.descriptionLicense}` : "";

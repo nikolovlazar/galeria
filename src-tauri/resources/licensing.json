@@ -1,0 +1,515 @@
+{
+  "version": 1,
+  "reviewed": "2026-11-11",
+  "policy": "Galeria downloads an image only when its rights holder has placed it in the public domain or under a license that lets anyone use it freely: CC0, Public Domain Mark, CC BY or CC BY-SA. NonCommercial and NoDerivatives licenses, 'in copyright' statements and anything Galeria does not recognise are refused. Each source below states which field of the museum's own record proves that, and Galeria re-reads that record from the museum immediately before every download.",
+  "disclaimer": "These rules encode each institution's published policy as reviewed on the date above. Museums say they release only works they believe to be in the public domain and give no warranty about third-party rights; neither does Galeria. This is not legal advice.",
+  "licenses": [
+    {
+      "id": "cc-by-nc-nd",
+      "label": "CC BY-NC-ND",
+      "allowed": false,
+      "contains": [
+        "by-nc-nd"
+      ],
+      "reason": "NonCommercial/NoDerivatives licenses restrict how an image may be used; Galeria accepts only licenses that allow any use."
+    },
+    {
+      "id": "cc-by-nc-sa",
+      "label": "CC BY-NC-SA",
+      "allowed": false,
+      "contains": [
+        "by-nc-sa"
+      ],
+      "reason": "NonCommercial licenses restrict how an image may be used; Galeria accepts only licenses that allow any use."
+    },
+    {
+      "id": "cc-by-nc",
+      "label": "CC BY-NC",
+      "allowed": false,
+      "contains": [
+        "by-nc"
+      ],
+      "reason": "NonCommercial licenses restrict how an image may be used; Galeria accepts only licenses that allow any use."
+    },
+    {
+      "id": "cc-by-nd",
+      "label": "CC BY-ND",
+      "allowed": false,
+      "contains": [
+        "by-nd"
+      ],
+      "reason": "NoDerivatives licenses forbid adapted versions; Galeria crops, scales and pans paintings, so it does not accept them."
+    },
+    {
+      "id": "cc-by-sa",
+      "label": "CC BY-SA",
+      "allowed": true,
+      "attribution": true,
+      "share_alike": true,
+      "contains": [
+        "by-sa"
+      ],
+      "url": "https://creativecommons.org/licenses/by-sa/4.0/",
+      "obligations": [
+        "Credit the creator named on the plate.",
+        "Keep the license notice with the image.",
+        "If you share a modified version, it must use the same license."
+      ]
+    },
+    {
+      "id": "cc-by",
+      "label": "CC BY",
+      "allowed": true,
+      "attribution": true,
+      "contains": [
+        "cc-by",
+        "cc by",
+        "/licenses/by/"
+      ],
+      "url": "https://creativecommons.org/licenses/by/4.0/",
+      "obligations": [
+        "Credit the creator named on the plate.",
+        "Keep the license notice with the image."
+      ]
+    },
+    {
+      "id": "cc0",
+      "label": "CC0",
+      "allowed": true,
+      "attribution": false,
+      "contains": [
+        "cc0",
+        "cc-zero",
+        "cc zero",
+        "publicdomain/zero"
+      ],
+      "url": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "obligations": []
+    },
+    {
+      "id": "pdm",
+      "label": "Public domain",
+      "allowed": true,
+      "attribution": false,
+      "exact": [
+        "pd",
+        "public domain"
+      ],
+      "prefixes": [
+        "pd-",
+        "public domain"
+      ],
+      "contains": [
+        "publicdomain/mark",
+        "cc-pd-mark",
+        "no known copyright",
+        "rightsstatements.org/vocab/noc-us"
+      ],
+      "url": "https://creativecommons.org/publicdomain/mark/1.0/",
+      "obligations": []
+    },
+    {
+      "id": "gfdl",
+      "label": "GFDL",
+      "allowed": false,
+      "contains": [
+        "gfdl",
+        "gnu free documentation"
+      ],
+      "reason": "The GNU Free Documentation License requires distributing the full license text with every copy, which a wallpaper cannot do."
+    },
+    {
+      "id": "copyright",
+      "label": "In copyright",
+      "allowed": false,
+      "contains": [
+        "in copyright",
+        "rightsstatements.org/vocab/inc",
+        "all rights reserved",
+        "copyrighted"
+      ],
+      "reason": "The work or its photograph is under copyright."
+    }
+  ],
+  "sources": [
+    {
+      "id": "nga",
+      "name": "National Gallery of Art",
+      "museum": "National Gallery of Art, Washington",
+      "match_museum": [
+        "national gallery of art"
+      ],
+      "program": "Open Access",
+      "grants": "cc0",
+      "policy_url": "https://www.nga.gov/terms-and-notices#open-access",
+      "data_url": "https://github.com/NationalGalleryOfArt/opendata",
+      "quote": "Images of these works are available free of charge for any use, commercial or non-commercial, under Creative Commons Zero (CC0). Users do not need to contact the National Gallery for authorization to use these images.",
+      "summary": "The Gallery releases digital images of works it believes to be in the public domain under CC0. Its open dataset marks each such image with openaccess = 1; works under copyright, not fully owned or contractually restricted are not flagged and are never offered here.",
+      "rule": {
+        "all": [
+          {
+            "field": "openaccess",
+            "op": "equals",
+            "value": "1"
+          }
+        ],
+        "license": "cc0"
+      },
+      "evidence": "published_images.csv: openaccess",
+      "attribution": {
+        "required": false,
+        "requested": "Courtesy National Gallery of Art, Washington",
+        "credit": "Courtesy National Gallery of Art, Washington"
+      },
+      "images": "IIIF at api.nga.gov; the public endpoint returns at most 4,096 px on the long edge.",
+      "etiquette": {
+        "search_concurrency": 1,
+        "download_interval_ms": 800,
+        "note": "No search API: Galeria downloads the Gallery's CC0 open dataset once and searches it locally."
+      }
+    },
+    {
+      "id": "cma",
+      "name": "Cleveland Museum of Art",
+      "museum": "Cleveland Museum of Art, Cleveland",
+      "match_museum": [
+        "cleveland museum of art"
+      ],
+      "program": "Open Access",
+      "grants": "cc0",
+      "policy_url": "https://www.clevelandart.org/open-access",
+      "data_url": "https://openaccess-api.clevelandart.org/",
+      "quote": "High-resolution images and data related to the CMA's collection are made available under a Creative Commons Zero (CC0) designation.",
+      "summary": "Images of public-domain artworks carry share_license_status \"CC0\" in the museum's API and may be used for anything without permission or citation. Works under copyright, with donor or lender restrictions, or not fully owned by the museum carry a different status and are refused.",
+      "rule": {
+        "all": [
+          {
+            "field": "share_license_status",
+            "op": "equals",
+            "value": "CC0"
+          }
+        ],
+        "license": "cc0"
+      },
+      "evidence": "API: share_license_status",
+      "attribution": {
+        "required": false,
+        "requested": "Artist. Title. Date. Medium. Dimensions. The Cleveland Museum of Art. Credit Line. Accession Number.",
+        "credit": "The Cleveland Museum of Art (CC0)"
+      },
+      "images": "Full-size uncompressed TIFF originals, commonly 6,000-12,000 px; Galeria converts them to JPEG.",
+      "etiquette": {
+        "search_concurrency": 1,
+        "download_interval_ms": 500
+      }
+    },
+    {
+      "id": "rijks",
+      "name": "Rijksmuseum",
+      "museum": "Rijksmuseum, Amsterdam",
+      "match_museum": [
+        "rijksmuseum"
+      ],
+      "program": "Information and Data Policy",
+      "grants": null,
+      "policy_url": "https://data.rijksmuseum.nl/policy",
+      "data_url": "https://data.rijksmuseum.nl/docs/",
+      "quote": "For much of the information and data on the collection website, you will find a Public Domain or Creative Commons Zero (CC0) Public Domain Dedication under the copyright notice, meaning you can use the material freely.",
+      "summary": "Each object's record carries a rights statement. Public Domain and CC0 images may be used freely; a few carry CC BY 4.0 and must credit the Rijksmuseum; photographs of works still under copyright name their rights holder and are refused. Galeria additionally requires the museum's own 'downloadable' flag on the image.",
+      "rule": {
+        "all": [
+          {
+            "field": "rights",
+            "op": "license"
+          },
+          {
+            "field": "downloadable",
+            "op": "not_equals",
+            "value": "false"
+          }
+        ]
+      },
+      "evidence": "EDM record: edm:rights; Linked Art: digital object flagged 'downloadbaar'",
+      "attribution": {
+        "required": false,
+        "requested": "Rijksmuseum, Amsterdam",
+        "credit": "Rijksmuseum, Amsterdam",
+        "note": "The museum asks to be credited as the source even where the license does not require it."
+      },
+      "images": "IIIF at iiif.micr.io, usually 4,000-8,000 px; Galeria requests at most 6,500 px wide.",
+      "etiquette": {
+        "search_concurrency": 6,
+        "download_interval_ms": 800
+      }
+    },
+    {
+      "id": "met",
+      "name": "The Metropolitan Museum of Art",
+      "museum": "The Metropolitan Museum of Art, New York",
+      "match_museum": [
+        "metropolitan museum"
+      ],
+      "program": "Open Access",
+      "grants": "cc0",
+      "policy_url": "https://www.metmuseum.org/policies/image-resources",
+      "data_url": "https://metmuseum.github.io/",
+      "quote": "Open Access ... makes images of artworks it believes to be in the public domain widely and freely available for unrestricted use, and at no cost, in accordance with the Creative Commons Zero (CC0) designation.",
+      "summary": "The collection API marks open-access works with isPublicDomain = true and only then includes a full-size image. Works under copyright or other restrictions must be licensed through Art Resource and are refused.",
+      "rule": {
+        "all": [
+          {
+            "field": "isPublicDomain",
+            "op": "equals",
+            "value": "true"
+          }
+        ],
+        "license": "cc0"
+      },
+      "evidence": "API: isPublicDomain",
+      "attribution": {
+        "required": false,
+        "requested": "The Metropolitan Museum of Art",
+        "credit": "The Metropolitan Museum of Art (CC0)"
+      },
+      "images": "JPEG, up to 4,000 px on the long edge.",
+      "etiquette": {
+        "search_concurrency": 4,
+        "download_interval_ms": 800,
+        "note": "The API documents an 80 requests/second limit but blocks sustained bursts; Galeria looks up at most four objects at a time."
+      }
+    },
+    {
+      "id": "aic",
+      "name": "Art Institute of Chicago",
+      "museum": "Art Institute of Chicago",
+      "match_museum": [
+        "art institute of chicago"
+      ],
+      "program": "Open Access Images",
+      "grants": "cc0",
+      "policy_url": "https://www.artic.edu/open-access/open-access-images",
+      "data_url": "https://api.artic.edu/docs/",
+      "quote": "The Art Institute of Chicago is pleased to offer free, unrestricted use of over 50,000 images of works in the collection believed to be in the public domain or to which the museum otherwise waives any copyright it might have.",
+      "summary": "Public-domain works carry is_public_domain = true in the API and are released under CC0. If a work lacks that flag the museum says to assume it is not in the public domain; Galeria refuses it.",
+      "rule": {
+        "all": [
+          {
+            "field": "is_public_domain",
+            "op": "equals",
+            "value": "true"
+          }
+        ],
+        "license": "cc0"
+      },
+      "evidence": "API: is_public_domain",
+      "attribution": {
+        "required": false,
+        "requested": "Artist. Title, Date. The Art Institute of Chicago.",
+        "credit": "The Art Institute of Chicago (CC0)"
+      },
+      "images": "IIIF; Galeria requests the same 3,000 px size as the download button on the museum's website.",
+      "etiquette": {
+        "search_concurrency": 1,
+        "download_interval_ms": 1200,
+        "note": "The museum asks for one image at a time with a one-second pause, at most 60 API requests a minute, and an AIC-User-Agent header naming the project."
+      }
+    },
+    {
+      "id": "commons",
+      "name": "Wikimedia Commons",
+      "museum": null,
+      "match_museum": [],
+      "program": "Free media repository",
+      "grants": null,
+      "policy_url": "https://commons.wikimedia.org/wiki/Commons:Reusing_content_outside_Wikimedia",
+      "data_url": "https://commons.wikimedia.org/wiki/Commons:Licensing",
+      "quote": "Almost all content hosted on Wikimedia Commons may be freely reused subject to certain restrictions ... some licenses require that the original creator be attributed.",
+      "summary": "Commons hosts images of works held by museums everywhere, each file under its own license. Galeria reads the license from the file's own record and accepts public domain, CC0, CC BY and CC BY-SA. Where attribution is required, the photographer and license always appear on the plate.",
+      "rule": {
+        "all": [
+          {
+            "field": "license",
+            "op": "license"
+          }
+        ]
+      },
+      "evidence": "File metadata: License / LicenseShortName",
+      "attribution": {
+        "required": null,
+        "requested": "Creator, license and a link to the file page",
+        "credit": null,
+        "note": "A faithful photograph of a public-domain painting is treated as public domain by Commons; photographs of frescoes, icons in situ or framed works are usually the photographer's own work under CC BY or CC BY-SA."
+      },
+      "images": "Originals vary from 3,000 px to gigapixel; very large originals are fetched as a 3,840 px rendition.",
+      "etiquette": {
+        "search_concurrency": 1,
+        "download_interval_ms": 2500,
+        "note": "Original files are throttled after bursts; Galeria downloads one at a time, 2.5 seconds apart."
+      }
+    }
+  ],
+  "museums": [
+    {
+      "name": "Staatliche Museen zu Berlin",
+      "match": [
+        "alte nationalgalerie",
+        "staatliche museen zu berlin",
+        "gemäldegalerie, berlin",
+        "neue nationalgalerie"
+      ],
+      "policy_url": "https://www.smb.museum/en/open-science/use/",
+      "license": "Per object: Public Domain Mark, CC BY-SA, or CC BY-NC-SA",
+      "summary": "The Berlin State Museums label every image individually. Those marked Public Domain Mark or CC BY-SA may be reused freely; those marked CC BY-NC-SA or carrying third-party rights may not. Galeria has no direct connection to their catalogue, so it offers these works only through Wikimedia Commons, file by file."
+    },
+    {
+      "name": "Musée du Louvre",
+      "match": [
+        "louvre"
+      ],
+      "policy_url": "https://collections.louvre.fr/en/page/cgu",
+      "license": null,
+      "summary": "The Louvre's terms of use allow its medium-format photographs of public-domain works to be downloaded free of charge only for strictly private use and a short list of scientific and educational uses; other reuse is licensed for a fee through GrandPalaisRmn. That is not an open license, so Galeria never downloads from the Louvre."
+    },
+    {
+      "name": "Musée d'Orsay and Musée de l'Orangerie",
+      "match": [
+        "orsay",
+        "orangerie"
+      ],
+      "policy_url": "https://www.musee-orsay.fr/en/legal-information",
+      "license": null,
+      "summary": "The museums' legal notice prohibits reproducing the site's content without authorisation. Galeria never downloads from them."
+    },
+    {
+      "name": "Musée Marmottan Monet",
+      "match": [
+        "marmottan"
+      ],
+      "policy_url": "https://www.marmottan.fr/en/press-and-professionals/order-your-photographs/",
+      "license": null,
+      "summary": "The museum publishes no terms that allow its images of paintings to be reused: image requests are handled by e-mail, and its royalty-free downloads are views of the building and its rooms. Galeria never downloads from it."
+    },
+    {
+      "name": "Museo del Prado",
+      "match": [
+        "prado"
+      ],
+      "policy_url": "https://www.museodelprado.es/en/legal-information",
+      "license": null,
+      "summary": "The Prado allows downloads for limited personal, educational, non-commercial use and expressly prohibits commercial use, which goes through its paid image bank. That is not an open license, so Galeria never downloads from the Prado."
+    },
+    {
+      "name": "Gallerie degli Uffizi",
+      "match": [
+        "uffizi"
+      ],
+      "policy_url": "https://www.uffizi.it/en/professional-services/photo-rights-reproductions",
+      "license": null,
+      "summary": "Reproductions of works in Italian state collections are governed by the Cultural Heritage Code (arts. 107-108): the Uffizi grants them by concession, with fees for commercial and most publication uses. Galeria never downloads from the Uffizi."
+    },
+    {
+      "name": "Kunsthistorisches Museum",
+      "match": [
+        "kunsthistorisches"
+      ],
+      "policy_url": "https://www.khm.at/en/museum/rights-reproduction",
+      "license": null,
+      "summary": "The museum states that all pictures are protected and may not be reproduced or used without its express permission, for a fee. Galeria never downloads from it."
+    },
+    {
+      "name": "Van Gogh Museum",
+      "match": [
+        "van gogh museum"
+      ],
+      "policy_url": "https://www.vangoghmuseum.nl/en/about/organisation/terms-and-conditions/use-and-permissions-of-collection-images",
+      "license": null,
+      "summary": "The museum lets images on its website be downloaded free of charge for non-commercial use only (research, private study, personal sites), with full credits; commercial use has to be requested under separate conditions. A non-commercial restriction is not an open license, so Galeria never downloads from it."
+    },
+    {
+      "name": "State Tretyakov Gallery",
+      "match": [
+        "tretyakov"
+      ],
+      "policy_url": "https://www.tretyakovgallery.ru/about/copirith/",
+      "license": null,
+      "summary": "The gallery allows non-commercial use of its site's images with a credit; commercial use needs written permission and digital copies are supplied under a paid contract. Galeria never downloads from it."
+    },
+    {
+      "name": "State Russian Museum",
+      "match": [
+        "russian museum"
+      ],
+      "policy_url": "https://en.rusmuseum.ru/",
+      "license": null,
+      "summary": "The museum's site states that its materials may be used only with the museum's permission. Galeria never downloads from it."
+    },
+    {
+      "name": "National Gallery of Greece",
+      "match": [
+        "national gallery of greece",
+        "alexandros soutsos"
+      ],
+      "policy_url": "https://library.nationalgallery.gr/en/suxnes_erotiseis/index.html",
+      "license": null,
+      "summary": "The gallery publishes no open-access terms; publication requires a written request and payment of rights. Galeria never downloads from it."
+    },
+    {
+      "name": "Byzantine and Christian Museum",
+      "match": [
+        "byzantine and christian museum"
+      ],
+      "policy_url": "https://www.byzantinemuseum.gr/en/terms",
+      "license": "CC BY-NC-ND 4.0",
+      "summary": "The museum releases its website content under CC BY-NC-ND 4.0. NonCommercial and NoDerivatives licenses are not among those Galeria accepts, so it never downloads from the museum; photographs taken by visitors and published on Wikimedia Commons under their own license are a separate matter."
+    },
+    {
+      "name": "National Museum of Serbia",
+      "match": [
+        "national museum of serbia",
+        "national museum in belgrade"
+      ],
+      "policy_url": null,
+      "license": null,
+      "summary": "No statement about reusing the museum's images could be found, and without one nothing is permitted by default. Galeria never downloads from it."
+    },
+    {
+      "name": "Chazen Museum of Art",
+      "match": [
+        "chazen"
+      ],
+      "policy_url": "https://chazen.wisc.edu/contact-us/request-an-image",
+      "license": null,
+      "summary": "The museum provides images on request for non-commercial, educational or personal use only and has no open-access policy. Galeria never downloads from it."
+    },
+    {
+      "name": "Churches and monasteries",
+      "match": [
+        "monastery",
+        "church",
+        "santa maria",
+        "apostolic palace",
+        "vatican",
+        "chapel",
+        "cathedral",
+        "basilica"
+      ],
+      "policy_url": null,
+      "license": null,
+      "summary": "Wall paintings, icons and mosaics that are still in a church or monastery are not covered by any museum's open-access programme. The images of them on Wikimedia Commons are photographs by individual photographers, each under its own license (usually CC BY-SA, which requires naming the photographer)."
+    },
+    {
+      "name": "Collection not recorded",
+      "match": [
+        "collection not recorded"
+      ],
+      "policy_url": null,
+      "license": null,
+      "summary": "The manifest does not say which collection holds these works. They came from Wikimedia Commons, where each file states its own license."
+    }
+  ],
+  "fallback": {
+    "direct": false,
+    "via": "commons",
+    "summary": "Galeria knows of no open-access download programme for this institution, so it never downloads from it directly. Its works are offered only through Wikimedia Commons, file by file, when that file's own license permits."
+  }
+}

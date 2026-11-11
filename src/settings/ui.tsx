@@ -20,7 +20,19 @@ export function useSnapshot() {
 export function useLibrary(snap: Snapshot | null) {
   const [lib, setLib] = useState<LibraryView | null>(null);
   const key = snap
-    ? JSON.stringify([snap.library.loadedAt, snap.library.enriched, snap.settings.excluded.length, snap.settings.favorites, snap.library.root])
+    ? JSON.stringify([
+        snap.library.loadedAt,
+        snap.library.enriched,
+        snap.settings.excluded.length,
+        snap.settings.favorites,
+        snap.library.root,
+        // Everything a painting's own view depends on: its tone, museum switch and rotation membership.
+        snap.settings.appearance.overrides,
+        snap.tone,
+        snap.settings.sources.disabledMuseums,
+        snap.settings.rotation.scope,
+        snap.settings.playlists,
+      ])
     : "";
   useEffect(() => {
     if (!snap) return;

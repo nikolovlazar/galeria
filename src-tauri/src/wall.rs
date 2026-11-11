@@ -19,9 +19,16 @@ pub fn reconcile(app: &AppHandle) {
     let core = app.state::<Core>();
     let (displays, live) = {
         let i = core.lock();
-        (i.displays.clone(), i.settings.wallpaper.live && platform::live_wallpaper_supported())
+        (
+            i.displays.clone(),
+            i.settings.wallpaper.live && platform::live_wallpaper_supported(),
+        )
     };
-    let wanted: Vec<&DisplayInfo> = if live { displays.iter().collect() } else { Vec::new() };
+    let wanted: Vec<&DisplayInfo> = if live {
+        displays.iter().collect()
+    } else {
+        Vec::new()
+    };
     for (label, w) in app.webview_windows() {
         if label.starts_with("wall-") && !wanted.iter().any(|d| d.label == label) {
             let _ = w.destroy();
@@ -92,7 +99,11 @@ fn display_under_cursor(app: &AppHandle, displays: &[DisplayInfo]) -> Option<Dis
         .cloned()
 }
 
-pub fn open_viewer(app: &AppHandle, painting: Option<String>, display: Option<String>) -> Result<(), String> {
+pub fn open_viewer(
+    app: &AppHandle,
+    painting: Option<String>,
+    display: Option<String>,
+) -> Result<(), String> {
     let core = app.state::<Core>();
     let displays = core.lock().displays.clone();
     let d = display
@@ -103,7 +114,12 @@ pub fn open_viewer(app: &AppHandle, painting: Option<String>, display: Option<St
     let id = {
         let i = core.lock();
         painting
-            .or_else(|| i.persisted.assignments.get(&d.key).map(|a| a.painting.clone()))
+            .or_else(|| {
+                i.persisted
+                    .assignments
+                    .get(&d.key)
+                    .map(|a| a.painting.clone())
+            })
             .filter(|id| i.library.get(id).is_some())
             .or_else(|| i.library.paintings.first().map(|p| p.id.clone()))
             .ok_or("the library is empty")?
@@ -113,7 +129,8 @@ pub fn open_viewer(app: &AppHandle, painting: Option<String>, display: Option<St
         let _ = w.set_focus();
         return Ok(());
     }
-    let url = WebviewUrl::App(format!("viewer.html?id={}&display={}", enc(&id), enc(&d.key)).into());
+    let url =
+        WebviewUrl::App(format!("viewer.html?id={}&display={}", enc(&id), enc(&d.key)).into());
     let b = WebviewWindowBuilder::new(app, VIEWER, url)
         .title("Galeria")
         .decorations(false)
@@ -154,14 +171,16 @@ pub fn open_settings(app: &AppHandle, section: Option<String>) -> Result<(), Str
     #[allow(unused_mut)]
     let mut b = WebviewWindowBuilder::new(app, SETTINGS, url)
         .title("Galeria")
-        .inner_size(1080.0, 760.0)
+        .inner_size(1180.0, 800.0)
         .min_inner_size(880.0, 580.0)
         .center()
         .background_color(Color(24, 23, 22, 255))
         .focused(true);
     #[cfg(target_os = "macos")]
     {
-        b = b.title_bar_style(tauri::TitleBarStyle::Overlay).hidden_title(true);
+        b = b
+            .title_bar_style(tauri::TitleBarStyle::Overlay)
+            .hidden_title(true);
     }
     let w = b.build().map_err(|e| e.to_string())?;
     let _ = w.set_focus();

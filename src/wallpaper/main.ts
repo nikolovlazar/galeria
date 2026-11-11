@@ -2,7 +2,7 @@ import "../shared/base.css";
 import "../shared/plates.css";
 import "./wallpaper.css";
 import { listen } from "@tauri-apps/api/event";
-import { api, debounce, injectCustomStyles, installDebugPointer, onSnapshot } from "../shared/api";
+import { api, debounce, injectCustomStyles, installDebugPointer, onSnapshot, watchSystemTheme } from "../shared/api";
 import { makeDraggable, placePlate, plateSignature, renderPlate, type Area } from "../shared/plate";
 import { Stage } from "../shared/stage";
 import type { Display, Painting, PlatePosition, Snapshot } from "../shared/types";
@@ -164,6 +164,9 @@ onSnapshot((s) => {
   render();
 });
 installDebugPointer();
+// The wallpaper window is always open, so it is the one that notices Light/Dark Mode switching.
+watchSystemTheme();
+
 void listen("debug-dump", () => {
   void api.log(
     JSON.stringify({

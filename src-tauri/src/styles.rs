@@ -23,7 +23,9 @@ pub struct CustomStyle {
 }
 
 pub fn load(dir: &Path) -> Vec<CustomStyle> {
-    let Ok(rd) = std::fs::read_dir(dir) else { return Vec::new() };
+    let Ok(rd) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
     let mut out: Vec<CustomStyle> = rd
         .flatten()
         .map(|e| e.path())
@@ -35,12 +37,22 @@ pub fn load(dir: &Path) -> Vec<CustomStyle> {
                 .lines()
                 .take(12)
                 .find_map(|l| {
-                    let l = l.trim().trim_start_matches("/*").trim_start_matches('*').trim();
-                    l.strip_prefix("name:").map(|n| n.trim().trim_end_matches("*/").trim().to_string())
+                    let l = l
+                        .trim()
+                        .trim_start_matches("/*")
+                        .trim_start_matches('*')
+                        .trim();
+                    l.strip_prefix("name:")
+                        .map(|n| n.trim().trim_end_matches("*/").trim().to_string())
                 })
                 .filter(|n| !n.is_empty())
                 .unwrap_or_else(|| id.clone());
-            Some(CustomStyle { id, name, css, path: p })
+            Some(CustomStyle {
+                id,
+                name,
+                css,
+                path: p,
+            })
         })
         .collect();
     out.sort_by_key(|s| s.name.to_lowercase());
@@ -54,7 +66,11 @@ pub fn slug(name: &str) -> String {
         .chars()
         .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
         .collect();
-    let s = s.split('-').filter(|p| !p.is_empty()).collect::<Vec<_>>().join("-");
+    let s = s
+        .split('-')
+        .filter(|p| !p.is_empty())
+        .collect::<Vec<_>>()
+        .join("-");
     if s.is_empty() {
         "custom".into()
     } else {
@@ -74,8 +90,16 @@ pub fn create(dir: &Path, name: &str) -> Result<PathBuf, String> {
         path = dir.join(format!("{id}-{n}.css"));
         n += 1;
     }
-    let id = path.file_stem().and_then(|s| s.to_str()).unwrap_or(&id).to_string();
-    let display_name = if name.trim().is_empty() { id.clone() } else { name.trim().to_string() };
+    let id = path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or(&id)
+        .to_string();
+    let display_name = if name.trim().is_empty() {
+        id.clone()
+    } else {
+        name.trim().to_string()
+    };
     std::fs::write(&path, template(&id, &display_name)).map_err(|e| e.to_string())?;
     Ok(path)
 }
@@ -149,7 +173,10 @@ mod tests {
         let p = create(&dir, "Neon Night!").unwrap();
         assert!(p.ends_with("neon-night.css"));
         let p2 = create(&dir, "Brass").unwrap();
-        assert!(p2.ends_with("brass-custom.css"), "built-in ids are not shadowed");
+        assert!(
+            p2.ends_with("brass-custom.css"),
+            "built-in ids are not shadowed"
+        );
         let styles = load(&dir);
         assert_eq!(styles.len(), 2);
         let neon = styles.iter().find(|s| s.id == "neon-night").unwrap();

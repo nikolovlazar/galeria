@@ -58,10 +58,18 @@ pub fn list(app: &AppHandle) -> Vec<DisplayInfo> {
         let insets = Insets {
             top: inset(wa.position.y as i64 - pos.y as i64),
             left: inset(wa.position.x as i64 - pos.x as i64),
-            bottom: inset((pos.y as i64 + size.height as i64) - (wa.position.y as i64 + wa.size.height as i64)),
-            right: inset((pos.x as i64 + size.width as i64) - (wa.position.x as i64 + wa.size.width as i64)),
+            bottom: inset(
+                (pos.y as i64 + size.height as i64)
+                    - (wa.position.y as i64 + wa.size.height as i64),
+            ),
+            right: inset(
+                (pos.x as i64 + size.width as i64) - (wa.position.x as i64 + wa.size.width as i64),
+            ),
         };
-        let name = m.name().cloned().unwrap_or_else(|| format!("Display {}", i + 1));
+        let name = m
+            .name()
+            .cloned()
+            .unwrap_or_else(|| format!("Display {}", i + 1));
         out.push(DisplayInfo {
             key: name.clone(),
             name,
@@ -92,6 +100,11 @@ pub fn list(app: &AppHandle) -> Vec<DisplayInfo> {
         }
         d.label = format!("wall-{}", &crate::util::hash_str(&[&d.key])[..10]);
     }
-    out.sort_by(|a, b| b.primary.cmp(&a.primary).then(a.x.total_cmp(&b.x)).then(a.y.total_cmp(&b.y)));
+    out.sort_by(|a, b| {
+        b.primary
+            .cmp(&a.primary)
+            .then(a.x.total_cmp(&b.x))
+            .then(a.y.total_cmp(&b.y))
+    });
     out
 }
