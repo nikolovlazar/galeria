@@ -1,0 +1,61 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="wall" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#5a1f24"/>
+      <stop offset="1" stop-color="#2a0d10"/>
+    </linearGradient>
+    <linearGradient id="gold" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#f6e2a1"/>
+      <stop offset="0.25" stop-color="#c89b3c"/>
+      <stop offset="0.5" stop-color="#8a6320"/>
+      <stop offset="0.75" stop-color="#d9b25a"/>
+      <stop offset="1" stop-color="#7a531a"/>
+    </linearGradient>
+    <linearGradient id="goldInner" x1="1" y1="1" x2="0" y2="0">
+      <stop offset="0" stop-color="#f3d98c"/>
+      <stop offset="0.5" stop-color="#9b7027"/>
+      <stop offset="1" stop-color="#e5c36f"/>
+    </linearGradient>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#243b63"/>
+      <stop offset="0.55" stop-color="#d98b5f"/>
+      <stop offset="1" stop-color="#f2c98a"/>
+    </linearGradient>
+    <linearGradient id="hill1" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#3e5a3a"/>
+      <stop offset="1" stop-color="#1f2f22"/>
+    </linearGradient>
+    <linearGradient id="hill2" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#6b7a4a"/>
+      <stop offset="1" stop-color="#33402a"/>
+    </linearGradient>
+    <radialGradient id="spot" cx="0.5" cy="0.12" r="0.75">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.22"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="150%">
+      <feDropShadow dx="0" dy="22" stdDeviation="22" flood-color="#000" flood-opacity="0.55"/>
+    </filter>
+    <clipPath id="canvas"><rect x="292" y="322" width="440" height="330"/></clipPath>
+  </defs>
+  <!-- macOS-style squircle -->
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#wall)"/>
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#spot)"/>
+  <!-- frame -->
+  <g filter="url(#shadow)">
+    <rect x="232" y="262" width="560" height="450" rx="6" fill="url(#gold)"/>
+    <rect x="262" y="292" width="500" height="390" fill="url(#goldInner)"/>
+    <rect x="280" y="310" width="464" height="354" fill="#2b1a0b"/>
+  </g>
+  <!-- painting -->
+  <g clip-path="url(#canvas)">
+    <rect x="292" y="322" width="440" height="330" fill="url(#sky)"/>
+    <circle cx="590" cy="500" r="46" fill="#fbe7b5" opacity="0.95"/>
+    <path d="M292 560 C 360 500, 430 520, 500 548 S 640 520, 732 540 L 732 652 L 292 652 Z" fill="url(#hill2)"/>
+    <path d="M292 600 C 380 560, 470 600, 560 590 S 690 570, 732 600 L 732 652 L 292 652 Z" fill="url(#hill1)"/>
+  </g>
+  <!-- plate -->
+  <rect x="432" y="752" width="160" height="40" rx="4" fill="#efe9dc"/>
+  <rect x="452" y="766" width="120" height="5" rx="2.5" fill="#3a332a"/>
+  <rect x="472" y="777" width="80" height="4" rx="2" fill="#8a8073"/>
+</svg>

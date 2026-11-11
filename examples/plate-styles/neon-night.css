@@ -1,0 +1,11 @@
+/* name: Neon Night */
+.plate[data-style="neon-night"] {
+  color: #e8fbff;
+  padding: 1.3em 1.5em;
+  border-radius: 0.8em;
+  background: rgba(8, 10, 24, 0.78);
+  box-shadow: 0 0 0 1px #3ef2ff, 0 0 1.4em rgba(62, 242, 255, 0.55), inset 0 0 1.2em rgba(62, 242, 255, 0.18);
+  font-family: "Avenir Next", "Futura", system-ui, sans-serif;
+}
+.plate[data-style="neon-night"] .plate-title { font-style: normal; font-weight: 700; color: #ff5ec8; text-shadow: 0 0 10px rgba(255, 94, 200, 0.8); }
+.plate[data-style="neon-night"] .plate-artist { color: #3ef2ff; text-transform: uppercase; letter-spacing: 0.12em; font-size: 0.85em; }

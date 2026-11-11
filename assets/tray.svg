@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="44" height="44" viewBox="0 0 44 44">
+  <!-- Menu bar template icon: a framed landscape. Black + alpha only. -->
+  <path fill-rule="evenodd" fill="#000" d="M5 8h34a2 2 0 0 1 2 2v24a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V10a2 2 0 0 1 2-2Zm3 5v18h28V13H8Z"/>
+  <circle cx="28.5" cy="18" r="2.6" fill="#000"/>
+  <path fill="#000" d="M8 31l8.5-9.5 5.5 6 3.5-3.5L36 31Z"/>
+</svg>
