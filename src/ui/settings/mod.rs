@@ -101,6 +101,9 @@ pub struct SettingsUi {
     pub rotation: rotation::State,
     pub plate: plate::State,
     pub library_page: library::State,
+    /// Painting ids and per-museum/genre counts currently in `manifest.json`.
+    pub manifest_index: Arc<crate::core::ManifestIndex>,
+    manifest_stamp: (u64, usize, Option<std::path::PathBuf>),
     /// Painting id awaiting inline delete confirmation in Now Showing / Browse detail.
     pub confirm_delete: Option<String>,
     /// Museum name awaiting inline delete confirmation in Museums.
@@ -114,6 +117,12 @@ impl SettingsUi {
     pub fn new(cx: Ctx, snap: Arc<Snapshot>) -> SettingsUi {
         // No art folder yet: this is someone's first run.
         let onboarding = snap.library.root.is_none().then(onboarding::State::default);
+        let manifest_index = Arc::new(cx.app.core().manifest_index());
+        let manifest_stamp = (
+            snap.library.loaded_at,
+            snap.library.valid,
+            snap.library.root.clone(),
+        );
         SettingsUi {
             cx,
             snap,
@@ -134,6 +143,8 @@ impl SettingsUi {
             rotation: rotation::State::default(),
             plate: plate::State::default(),
             library_page: library::State::default(),
+            manifest_index,
+            manifest_stamp,
             confirm_delete: None,
             confirm_delete_museum: None,
             clock: 0.0,
@@ -154,11 +165,31 @@ impl SettingsUi {
 
     /// A new snapshot arrived.
     pub fn apply(&mut self, snap: Arc<Snapshot>, _: &mut Tx) {
+        let stamp = (
+            snap.library.loaded_at,
+            snap.library.valid,
+            snap.library.root.clone(),
+        );
         self.snap = snap;
+        if stamp != self.manifest_stamp {
+            self.manifest_stamp = stamp;
+            self.manifest_index = Arc::new(self.cx.app.core().manifest_index());
+        }
         if !self.slider_held {
             self.sliding = None;
         }
         self.refresh_library();
+    }
+
+    pub(super) fn sync_manifest_now(&mut self) {
+        let snap = Arc::new(self.cx.app.core().snapshot());
+        self.manifest_stamp = (
+            snap.library.loaded_at,
+            snap.library.valid,
+            snap.library.root.clone(),
+        );
+        self.snap = snap;
+        self.manifest_index = Arc::new(self.cx.app.core().manifest_index());
     }
 
     pub fn navigate(&mut self, section: Option<&str>, _: &mut Tx) {

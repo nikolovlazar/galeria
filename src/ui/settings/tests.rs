@@ -709,3 +709,117 @@ fn deleting_single_batch_and_museum_removes_files_manifest_and_advances_desktop(
     assert!(lib.join("c.png").exists(), "other museums stay untouched");
     assert_eq!(b.app.core().snapshot().library.valid, 1);
 }
+
+#[test]
+fn onboarding_an_existing_library_reflects_manifest_paintings_and_does_not_retick_them() {
+    use crate::licensing::Decision;
+    use crate::sources::Candidate;
+    use onboarding::Chosen;
+
+    let mut b = first_run();
+    let folder = b.dir.join("ExistingGaleria");
+    std::fs::create_dir_all(&folder).unwrap();
+    for name in ["a.png", "b.png"] {
+        image::RgbImage::from_pixel(16, 12, image::Rgb([110, 90, 70]))
+            .save(folder.join(name))
+            .unwrap();
+    }
+    let manifest = serde_json::json!({
+        "items": [
+            { "id": "cma:1", "file": "a.png", "title": "Already Here", "source": "cma", "source_id": "1", "tags": ["landscape"] },
+            { "id": "cma:2", "file": "b.png", "title": "Winter Here", "source": "cma", "source_id": "2", "tags": ["winter"] }
+        ]
+    });
+    std::fs::write(
+        folder.join("manifest.json"),
+        serde_json::to_string_pretty(&manifest).unwrap(),
+    )
+    .unwrap();
+
+    let picked = folder.clone();
+    b.rt.update(move |s, _| {
+        let o = s.onboarding.as_mut().unwrap();
+        o.step = onboarding::Step::Folder;
+        o.folder = Some(picked);
+    });
+    b.settle();
+    let next = b.rt.find("next").expect("Continue");
+    b.click(next);
+    b.settle();
+
+    assert_eq!(step(&b), Some(onboarding::Step::Paintings));
+    assert_eq!(b.rt.state.manifest_index.total, 2);
+    assert_eq!(b.rt.state.manifest_index.by_source.get("cma"), Some(&2));
+    assert_eq!(
+        b.rt.state
+            .manifest_index
+            .by_shelf
+            .get(&("cma".into(), "landscape".into())),
+        Some(&1)
+    );
+
+    let decision: Decision = serde_json::from_value(serde_json::json!({
+        "allowed": true, "licenseId": "cc0", "license": "CC0", "licenseUrl": null,
+        "attributionRequired": false, "shareAlike": false, "obligations": [],
+        "reason": "", "evidence": "", "program": "", "policyUrl": "",
+    }))
+    .unwrap();
+    b.rt.update(move |s, _| {
+        // cma:1 is already in manifest.json; cma:99 is new; winter shelf has only cma:2 (all owned).
+        s.discover.items = vec![
+            Candidate {
+                id: "cma:1".into(),
+                source: "cma".into(),
+                source_id: "1".into(),
+                title: "Already Here".into(),
+                decision: Some(decision.clone()),
+                ..Default::default()
+            },
+            Candidate {
+                id: "cma:99".into(),
+                source: "cma".into(),
+                source_id: "99".into(),
+                title: "Brand New".into(),
+                decision: Some(decision.clone()),
+                ..Default::default()
+            },
+        ];
+        s.onboarding_results();
+        s.onboarding.as_mut().unwrap().results.insert(
+            ("cma".into(), "winter".into()),
+            vec![Candidate {
+                id: "cma:2".into(),
+                source: "cma".into(),
+                source_id: "2".into(),
+                title: "Winter Here".into(),
+                decision: Some(decision),
+                ..Default::default()
+            }],
+        );
+    });
+    b.settle();
+
+    assert!(
+        b.rt.state.saved(&b.rt.state.discover.items[0]),
+        "cma:1 recognized as already in library"
+    );
+    assert!(
+        !b.rt.state.selectable(&b.rt.state.discover.items[0]),
+        "cma:1 cannot be ticked again"
+    );
+    assert!(
+        b.rt.state.discover.selected.is_empty(),
+        "nothing auto-ticked when library already has paintings"
+    );
+    assert_eq!(
+        b.rt.state.onboard_theme("winter"),
+        Chosen::Owned,
+        "shelf whose paintings are all in manifest.json shows Owned"
+    );
+
+    // With 0 new paintings ticked and an existing library, primary button opens Galeria directly.
+    let open = b.rt.find("next").expect("Open Galeria");
+    b.click(open);
+    b.settle();
+    assert!(b.rt.state.onboarding.is_none());
+}

@@ -100,8 +100,15 @@ impl SettingsUi {
         self.jobs.iter().find(|j| j.id == id)
     }
 
-    fn saved(&self, c: &Candidate) -> bool {
+    pub(super) fn saved(&self, c: &Candidate) -> bool {
         c.in_library
+            || self.manifest_index.ids.contains(&c.id)
+            || (!c.source.is_empty()
+                && !c.source_id.is_empty()
+                && self
+                    .manifest_index
+                    .ids
+                    .contains(&format!("{}:{}", c.source, c.source_id)))
             || self
                 .job(&c.id)
                 .is_some_and(|j| matches!(j.state, JobState::Done { .. }))
@@ -595,9 +602,10 @@ pub(super) fn result_tiles(s: &SettingsUi, l: &Look, width: f32, details: bool) 
     let mut tiles = Vec::new();
     for c in &d.items {
         let ok = c.decision.as_ref().is_some_and(|x| x.allowed);
+        let saved = s.saved(c);
         let job = s.job(&c.id);
-        let badge = if s.saved(c) {
-            Some(("In library".to_string(), Tone::Plain))
+        let badge = if saved {
+            Some(("In library".to_string(), Tone::Good))
         } else {
             job.map(|j| {
                 (
@@ -645,6 +653,7 @@ pub(super) fn result_tiles(s: &SettingsUi, l: &Look, width: f32, details: bool) 
                             }
                         }
                     })),
+                    owned: saved,
                     badge,
                     star: false,
                     corner: Some(match &c.decision {

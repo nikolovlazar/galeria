@@ -181,6 +181,8 @@ pub struct TileLook {
     pub tick: Option<bool>,
     /// Pressing the tick itself, apart from the rest of the tile. Without it the tile's own press does it.
     pub on_tick: Option<TickPress>,
+    /// Already in `manifest.json` (Discover / Onboarding).
+    pub owned: bool,
     pub badge: Option<(String, widgets::Tone)>,
     pub star: bool,
     /// Bottom-left and bottom-right labels over the picture.
@@ -209,7 +211,8 @@ pub fn tile(l: &Look, key: String, picture: &rune::Pixels, width: f32, t: TileLo
         let (ink, wash) = match tone {
             widgets::Tone::Bad => (white, rgb(0xb43a2a)),
             widgets::Tone::Gold => (l.on_gold, l.gold),
-            _ => (white, Color::BLACK.alpha(0.62)),
+            widgets::Tone::Good => (rgb(0xe8f8e0), rgb(0x23521e)),
+            widgets::Tone::Plain => (white, Color::BLACK.alpha(0.62)),
         };
         image = image.child(
             over(row()).absolute(8.0, 8.0).fill(wash).child(
@@ -224,7 +227,11 @@ pub fn tile(l: &Look, key: String, picture: &rune::Pixels, width: f32, t: TileLo
             el().pin(
                 None,
                 Some(7.0),
-                Some(if t.tick.is_some() { 36.0 } else { 8.0 }),
+                Some(if t.tick.is_some() || t.owned {
+                    36.0
+                } else {
+                    8.0
+                }),
                 None,
             )
             .child(icon(&icons::STAR, 15.0).color(rgb(0xf2c84b))),
@@ -248,6 +255,19 @@ pub fn tile(l: &Look, key: String, picture: &rune::Pixels, width: f32, t: TileLo
                 .on_press(move |s: &mut SettingsUi| f(s));
         }
         image = image.child(tick);
+    } else if t.owned {
+        image = image.child(
+            row()
+                .key("owned")
+                .pin(None, Some(8.0), Some(8.0), None)
+                .size(22.0, 22.0)
+                .center()
+                .radius(11.0)
+                .fill(rgb(0x23521e))
+                .border(1.5, rgb(0x9fd18b))
+                .help("Already in your library")
+                .child(icon(&icons::CHECK, 13.0).color(rgb(0xe8f8e0))),
+        );
     }
     if let Some((label, tone)) = &t.corner {
         let ink = if *tone == widgets::Tone::Good {
@@ -320,13 +340,21 @@ pub fn tile(l: &Look, key: String, picture: &rune::Pixels, width: f32, t: TileLo
             1.0,
             if marked {
                 l.gold_border
+            } else if t.owned {
+                l.ok.alpha(0.45)
             } else {
                 Color::TRANSPARENT
             },
         )
         .hover(l.kit.c.hover)
         .cursor(Cursor::Pointer)
-        .child(if t.faded { image.dim(0.45) } else { image })
+        .child(if t.faded {
+            image.dim(0.45)
+        } else if t.owned {
+            image.dim(0.8)
+        } else {
+            image
+        })
         .child(
             col()
                 .w(width)
@@ -599,6 +627,7 @@ fn painting_tile(s: &SettingsUi, l: &Look, p: &PaintingView, width: f32, on_desk
             selected: !st.picking && st.selected.as_deref() == Some(p.id.as_str()),
             tick: st.picking.then(|| st.picked.contains(&p.id)),
             on_tick: None,
+            owned: false,
             badge: on_desktop.then(|| ("On desktop".to_string(), widgets::Tone::Gold)),
             star: p.favorite,
             corner: None,

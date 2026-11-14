@@ -235,7 +235,8 @@ async fn run(app: &AppHandle, job: &Job) -> Result<State, String> {
         (
             i.settings.library_path.clone(),
             i.settings.download.max_long_edge,
-            i.library.get(&job.id).is_some(),
+            i.library
+                .contains_candidate(&job.id, &job.source, &job.locator),
         )
     };
     let root = root

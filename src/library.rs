@@ -122,6 +122,22 @@ impl Library {
     pub fn get(&self, id: &str) -> Option<&Painting> {
         self.index.get(id).and_then(|&i| self.paintings.get(i))
     }
+
+    /// Whether a museum candidate is already in `manifest.json`, matching either
+    /// its canonical `id` (`source:source_id`) or `source` + `source_id`/`accession`.
+    pub fn contains_candidate(&self, id: &str, source: &str, source_id: &str) -> bool {
+        if self.get(id).is_some() {
+            return true;
+        }
+        if source.is_empty() || source_id.is_empty() {
+            return false;
+        }
+        self.paintings.iter().any(|p| {
+            p.source.as_deref() == Some(source)
+                && (p.source_id.as_deref() == Some(source_id)
+                    || p.accession.as_deref() == Some(source_id))
+        })
+    }
 }
 
 /// Cache of image dimensions so re-validating a growing library stays cheap.

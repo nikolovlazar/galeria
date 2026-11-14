@@ -329,6 +329,17 @@ pub struct Snapshot {
     pub downloads: DownloadSummary,
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct ManifestIndex {
+    /// Every painting id in the library, plus `source:source_id` / `source:accession` aliases.
+    pub ids: HashSet<String>,
+    /// Paintings per provider source (`"cma"`, `"rijks"`, `"met"`, `"aic"`, …).
+    pub by_source: HashMap<String, usize>,
+    /// Paintings per `(source, genre_id)`.
+    pub by_shelf: HashMap<(String, String), usize>,
+    pub total: usize,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LibraryView {
@@ -412,6 +423,37 @@ impl Core {
             bytes: p.bytes,
             modified: p.modified,
         })
+    }
+
+    /// Fast index of what `manifest.json` currently holds, for Discover and Onboarding.
+    pub fn manifest_index(&self) -> ManifestIndex {
+        let i = self.lock();
+        let mut idx = ManifestIndex {
+            total: i.library.paintings.len(),
+            ..Default::default()
+        };
+        for p in &i.library.paintings {
+            idx.ids.insert(p.id.clone());
+            let inferred_src = p
+                .source
+                .as_deref()
+                .or_else(|| p.id.split_once(':').map(|(s, _)| s));
+            if let Some(src) = inferred_src {
+                *idx.by_source.entry(src.to_string()).or_default() += 1;
+                for g in &p.genres {
+                    *idx.by_shelf
+                        .entry((src.to_string(), g.clone()))
+                        .or_default() += 1;
+                }
+                if let Some(sid) = &p.source_id {
+                    idx.ids.insert(format!("{src}:{sid}"));
+                }
+                if let Some(acc) = &p.accession {
+                    idx.ids.insert(format!("{src}:{acc}"));
+                }
+            }
+        }
+        idx
     }
 
     /// What the museum providers need: the HTTP client, the cache folder and the museums already in the library.

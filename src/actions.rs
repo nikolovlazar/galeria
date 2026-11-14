@@ -28,8 +28,14 @@ pub fn set_library_path(app: &AppHandle, path: Option<PathBuf>) -> Result<(), St
 pub fn setup_library(app: &AppHandle, path: PathBuf) -> Result<(), String> {
     std::fs::create_dir_all(&path)
         .map_err(|e| format!("Could not create {}: {e}", path.display()))?;
+    let same_root = app.core().lock().settings.library_path.as_deref() == Some(path.as_path());
     create_manifest(app, &path)?;
-    set_library_path(app, Some(path))
+    set_library_path(app, Some(path))?;
+    if same_root {
+        // Re-selecting the same folder still rescans manifest.json.
+        core::reload_library(app);
+    }
+    Ok(())
 }
 
 /// Start an empty manifest.json in `root` when it has none.
@@ -143,7 +149,7 @@ pub async fn discover_search(
     let mut page = sources::search(&ctx(app), query).await?;
     let i = app.core().lock();
     for c in &mut page.items {
-        c.in_library = i.library.get(&c.id).is_some();
+        c.in_library = i.library.contains_candidate(&c.id, &c.source, &c.source_id);
     }
     Ok(page)
 }

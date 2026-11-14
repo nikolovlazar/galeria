@@ -114,12 +114,13 @@ impl Default for State {
     }
 }
 
-/// How a museum or a theme stands: nothing of it chosen, some, or all.
+/// How a museum or a theme stands: nothing chosen, some, all queued, or already in library.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Chosen {
     None,
     Some,
     All,
+    Owned,
 }
 
 fn request_of(c: &Candidate) -> Request {
@@ -150,10 +151,29 @@ fn friendly(path: &std::path::Path) -> String {
     }
 }
 
+/// Count items in an existing `manifest.json` without decoding images, for the Folder step.
+fn count_manifest_items(folder: &std::path::Path) -> Option<usize> {
+    let text = std::fs::read_to_string(folder.join(crate::library::MANIFEST)).ok()?;
+    let val: serde_json::Value = serde_json::from_str(&text).ok()?;
+    match val {
+        serde_json::Value::Array(a) => Some(a.len()),
+        serde_json::Value::Object(o) => ["items", "paintings", "artworks", "works"]
+            .iter()
+            .find_map(|k| o.get(*k).and_then(|v| v.as_array()).map(Vec::len)),
+        _ => None,
+    }
+}
+
 /// What is in `folder` now, so Continue holds no surprise.
 fn describe(folder: &std::path::Path) -> String {
     if folder.join(crate::library::MANIFEST).is_file() {
-        return "This folder already has a manifest.json. Galeria will show the paintings it lists and add your downloads to it.".into();
+        return match count_manifest_items(folder) {
+            Some(n) if n > 0 => format!(
+                "Found {} in manifest.json. Galeria will keep them all and mark what you already have on the next step.",
+                widgets::plural(n, "painting", "paintings")
+            ),
+            _ => "This folder already has a manifest.json. Galeria will show the paintings it lists and add your downloads to it.".into(),
+        };
     }
     let empty = std::fs::read_dir(folder)
         .map(|mut d| d.next().is_none())
@@ -243,11 +263,28 @@ impl SettingsUi {
     }
 
     fn onboard_folder_ready(&mut self, result: Result<(), String>) {
-        let Some(o) = self.onboard() else { return };
-        o.working = false;
         match result {
-            Ok(()) => self.onboard_paintings(),
-            Err(e) => o.error = Some(e),
+            Ok(()) => {
+                self.sync_manifest_now();
+                let existing = self.manifest_index.total;
+                if let Some(o) = self.onboard() {
+                    o.working = false;
+                    o.results.clear();
+                    o.picked.clear();
+                    o.whole.clear();
+                    o.unpicked.clear();
+                    // Only pre-tick a starter set when the folder is empty.
+                    o.started = existing > 0;
+                }
+                self.discover.selected.clear();
+                self.onboard_paintings();
+            }
+            Err(e) => {
+                if let Some(o) = self.onboard() {
+                    o.working = false;
+                    o.error = Some(e);
+                }
+            }
         }
     }
 
@@ -384,11 +421,12 @@ impl SettingsUi {
             .take(FIRST_SET)
             .map(|c| c.id.clone())
             .collect();
+        let empty_library = self.manifest_index.total == 0;
         let Some(o) = self.onboard() else { return };
         if !failed {
             o.results.insert(shelf, items);
         }
-        let fresh = !o.started && o.picked.is_empty() && o.whole.is_empty();
+        let fresh = !o.started && o.picked.is_empty() && o.whole.is_empty() && empty_library;
         if fresh && !first.is_empty() {
             o.started = true;
             self.discover.selected = first.into_iter().collect();
@@ -479,11 +517,25 @@ impl SettingsUi {
             return Chosen::None;
         };
         let whole = o.whole.contains(&shelf);
+        let shelf_items = if shelf == self.shelf()
+            && !(self.discover.loading && self.discover.items.is_empty())
+        {
+            Some(&self.discover.items)
+        } else {
+            o.results.get(&shelf)
+        };
+        if let Some(items) = shelf_items {
+            let selectable = items.iter().filter(|c| self.selectable(c)).count();
+            let owned = items.iter().filter(|c| self.saved(c)).count();
+            if selectable == 0 && owned > 0 {
+                return Chosen::Owned;
+            }
+        }
         match self.onboard_shelf_ids(&shelf) {
             None => Chosen::All,
             Some(ids) if ids.is_empty() => Chosen::None,
             Some(ids) => {
-                let all = o.results.get(&shelf).is_some_and(|items| {
+                let all = shelf_items.is_some_and(|items| {
                     items.iter().filter(|c| self.selectable(c)).count() == ids.len()
                 });
                 if whole && all {
@@ -1002,7 +1054,7 @@ fn folder(s: &SettingsUi, l: &Look, o: &State) -> El {
     c
 }
 
-/// A box to tick: empty, a dash for "some of it", or a tick for all of it.
+/// A box to tick: empty, dash for some, gold check for queued, or green check when already owned.
 fn tick_box(
     l: &Look,
     key: String,
@@ -1010,23 +1062,32 @@ fn tick_box(
     state: Chosen,
     f: impl Fn(&mut SettingsUi) + 'static,
 ) -> El {
-    let on = state != Chosen::None;
+    let (fill, edge) = match state {
+        Chosen::All | Chosen::Some => (l.gold, l.gold),
+        Chosen::Owned => (rgb(0x23521e), rgb(0x9fd18b)),
+        Chosen::None => (Color::TRANSPARENT, l.text.alpha(0.45)),
+    };
     let mut b = row()
         .key(key)
         .role("checkbox")
         .label(name.to_string())
-        .focusable(true)
+        .focusable(state != Chosen::Owned)
         .size(18.0, 18.0)
         .radius(5.0)
         .center()
-        .fill(if on { l.gold } else { Color::TRANSPARENT })
-        .border(1.5, if on { l.gold } else { l.text.alpha(0.45) })
-        .cursor(rune::Cursor::Pointer)
-        .on_press(f);
+        .fill(fill)
+        .border(1.5, edge);
+    if state != Chosen::Owned {
+        b = b.cursor(rune::Cursor::Pointer).on_press(f);
+    }
     b = match state {
         Chosen::All => b
             .checked(true)
             .child(icon(&icons::CHECK, 12.0).color(l.on_gold)),
+        Chosen::Owned => b
+            .checked(true)
+            .help("Already in your library")
+            .child(icon(&icons::CHECK, 12.0).color(rgb(0xe8f8e0))),
         Chosen::Some => b
             .checked_mixed()
             .child(el().size(8.0, 2.0).radius(1.0).fill(l.on_gold)),
@@ -1035,15 +1096,28 @@ fn tick_box(
     b
 }
 
+#[allow(clippy::too_many_arguments)]
 fn museum_card(
     l: &Look,
     id: &'static str,
     name: &str,
     place: &str,
     grants: String,
+    in_library: usize,
     showing: bool,
     state: Chosen,
 ) -> El {
+    let mut chips = row()
+        .gap(6.0)
+        .flex_wrap()
+        .child(widgets::chip(l, grants, Tone::Good));
+    if in_library > 0 {
+        chips = chips.child(widgets::chip(
+            l,
+            format!("{in_library} in library"),
+            Tone::Plain,
+        ));
+    }
     let words = col()
         .grow(1.0)
         .min_w(0.0)
@@ -1060,7 +1134,7 @@ fn museum_card(
                 .font(widgets::small())
                 .color(l.muted),
         )
-        .child(el().pt(5.0).child(widgets::chip(l, grants, Tone::Good)));
+        .child(el().pt(5.0).child(chips));
     row()
         .key(format!("museum-{id}"))
         .role("radio")
@@ -1101,9 +1175,16 @@ fn museum_card(
 }
 
 /// A theme: press its name to look at it, tick its box to take all of it.
-fn theme_chip(l: &Look, id: &str, name: &str, showing: bool, state: Chosen) -> El {
+fn theme_chip(
+    l: &Look,
+    id: &str,
+    name: &str,
+    in_library: usize,
+    showing: bool,
+    state: Chosen,
+) -> El {
     let (show, take) = (id.to_string(), id.to_string());
-    row()
+    let mut chip = row()
         .key(format!("theme-{id}"))
         .role("radio")
         .label(name.to_string())
@@ -1145,7 +1226,15 @@ fn theme_chip(l: &Look, id: &str, name: &str, showing: bool, state: Chosen) -> E
             text(name.to_string())
                 .font(TextStyle::new(12.5, 550.0).lh(16.0))
                 .color(l.text),
-        )
+        );
+    if in_library > 0 {
+        chip = chip.child(
+            text(format!("· {in_library}"))
+                .font(TextStyle::new(11.5, 500.0).lh(15.0))
+                .color(l.ok),
+        );
+    }
+    chip
 }
 
 fn paintings(s: &SettingsUi, l: &Look, cx: &mut Cx<SettingsUi>) -> El {
@@ -1167,12 +1256,14 @@ fn paintings(s: &SettingsUi, l: &Look, cx: &mut Cx<SettingsUi>) -> El {
                     )
                 })
                 .unwrap_or_else(|| "Public domain".into());
+            let in_lib = s.manifest_index.by_source.get(*id).copied().unwrap_or(0);
             museum_card(
                 l,
                 id,
                 name,
                 place,
                 grants,
+                in_lib,
                 d.source == *id,
                 s.onboard_museum(id),
             )
@@ -1185,23 +1276,39 @@ fn paintings(s: &SettingsUi, l: &Look, cx: &mut Cx<SettingsUi>) -> El {
         .unwrap_or("");
     let themes: Vec<El> = themes()
         .iter()
-        .map(|g| theme_chip(l, &g.id, &g.name, g.id == showing, s.onboard_theme(&g.id)))
+        .map(|g| {
+            let in_lib = s
+                .manifest_index
+                .by_shelf
+                .get(&(d.source.clone(), g.id.clone()))
+                .copied()
+                .unwrap_or(0);
+            theme_chip(
+                l,
+                &g.id,
+                &g.name,
+                in_lib,
+                g.id == showing,
+                s.onboard_theme(&g.id),
+            )
+        })
         .collect();
     let here = d
         .items
         .iter()
         .filter(|c| d.selected.contains(&c.id) && s.selectable(c))
         .count();
+    let owned_here = d.items.iter().filter(|c| s.saved(c)).count();
     let (known, unread) = s.onboard_tally();
     let total = match (known, unread) {
-        (0, 0) => "Nothing ticked yet.".to_string(),
+        (0, 0) => "No new downloads ticked.".to_string(),
         (n, 0) => format!(
             "{} to download in all.",
-            widgets::plural(n, "painting", "paintings")
+            widgets::plural(n, "new painting", "new paintings")
         ),
         (n, u) => format!(
             "{} to download, plus {} not yet looked at (up to {} paintings each).",
-            widgets::plural(n, "painting", "paintings"),
+            widgets::plural(n, "new painting", "new paintings"),
             widgets::plural(u, "theme", "themes"),
             crate::sources::PAGE_SIZE
         ),
@@ -1212,8 +1319,28 @@ fn paintings(s: &SettingsUi, l: &Look, cx: &mut Cx<SettingsUi>) -> El {
         e.clone()
     } else if d.items.is_empty() {
         format!("Nothing came back for this theme here. {total}")
+    } else if owned_here > 0 {
+        format!(
+            "{owned_here} of {} here already in your library · {here} new ticked. {total}",
+            d.items.len()
+        )
     } else {
         format!("{here} of {} ticked here. {total}", d.items.len())
+    };
+    let existing = s.manifest_index.total;
+    let (head_title, head_sub) = if existing > 0 {
+        (
+            "Add more paintings, or start right away",
+            format!(
+                "Found {} in your manifest — paintings you already have are marked “In library”. Tick any more you want, or open Galeria now.",
+                widgets::plural(existing, "painting", "paintings")
+            ),
+        )
+    } else {
+        (
+            "Hang your first paintings",
+            "Look through the museums and themes and tick what you like. A box on a museum or a theme takes all of it. One painting goes straight on the wall.".to_string(),
+        )
     };
     let gap = 10.0;
     let room = cx
@@ -1228,11 +1355,7 @@ fn paintings(s: &SettingsUi, l: &Look, cx: &mut Cx<SettingsUi>) -> El {
         .h_full()
         .min_h(0.0)
         .gap(14.0)
-        .child(heading(
-            l,
-            "Hang your first paintings",
-            "Look through the museums and themes and tick what you like. A box on a museum or a theme takes all of it. One painting goes straight on the wall.",
-        ))
+        .child(heading(l, head_title, &head_sub))
         .child(row().w_full().gap(10.0).children(cards))
         .child(
             el().w_full().child(
@@ -1424,20 +1547,33 @@ fn footer(s: &SettingsUi, l: &Look, o: &State) -> El {
         Step::Paintings => {
             let (known, unread) = s.onboard_tally();
             let n = known + unread * crate::sources::PAGE_SIZE;
-            let label = match (known, unread) {
-                (0, 0) => "Download".to_string(),
-                (n, 0) => format!("Download {}", widgets::plural(n, "Painting", "Paintings")),
-                (_, _) => format!("Download up to {n} Paintings"),
-            };
-            (
-                back(Step::Folder),
-                vec![
-                    widgets::button(l, "Skip for Now", Kind::Quiet, |s, _| s.onboard_finish())
-                        .key("skip"),
-                    widgets::button_if(l, label, Kind::Primary, n > 0, |s, _| s.onboard_download())
+            let has_existing = s.manifest_index.total > 0;
+            if n == 0 && has_existing {
+                (
+                    back(Step::Folder),
+                    vec![widgets::button(l, "Open Galeria", Kind::Primary, |s, _| {
+                        s.onboard_finish()
+                    })
+                    .key("next")],
+                )
+            } else {
+                let label = match (known, unread) {
+                    (0, 0) => "Download".to_string(),
+                    (n, 0) => format!("Download {}", widgets::plural(n, "Painting", "Paintings")),
+                    (_, _) => format!("Download up to {n} Paintings"),
+                };
+                (
+                    back(Step::Folder),
+                    vec![
+                        widgets::button(l, "Skip for Now", Kind::Quiet, |s, _| s.onboard_finish())
+                            .key("skip"),
+                        widgets::button_if(l, label, Kind::Primary, n > 0, |s, _| {
+                            s.onboard_download()
+                        })
                         .key("next"),
-                ],
-            )
+                    ],
+                )
+            }
         }
         Step::Hanging => {
             let hung = s.sample().is_some();
