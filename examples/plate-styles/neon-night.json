@@ -1,0 +1,19 @@
+// Neon Night: a lit sign on a dark wall.
+// Copy this file into Galeria's plate-styles folder (Settings → Info Plate →
+// Custom styles → Open Folder) and pick it from the style list.
+{
+  "name": "Neon Night",
+  "base": "minimal",
+  "ink": "#e8fbff",
+  "font": "Avenir Next, Futura",
+  "background": "#080a18c7",
+  "radius": 0.8,
+  "padding": [1.3, 1.5],
+  "border": { "width": 1, "color": "#3ef2ff" },
+  "shadow": false,
+  "glow": { "blur": 1.4, "color": "#3ef2ff8c" },
+  "textShadow": false,
+  "title": { "color": "#ff5ec8", "weight": 700, "italic": false },
+  "artist": { "color": "#3ef2ff", "uppercase": true, "tracking": 0.12, "size": 0.85 },
+  "footer": { "opacity": 0.75 }
+}

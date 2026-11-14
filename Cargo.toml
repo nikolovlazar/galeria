@@ -1,0 +1,91 @@
+[package]
+name = "galeria"
+version = "0.1.0"
+description = "Museum-style painting wallpapers with info plates, slow panning and a distraction-free viewer."
+authors = ["Lazar Nikolov"]
+license = "MIT"
+edition = "2021"
+rust-version = "1.90"
+default-run = "galeria"
+
+[dependencies]
+# The UI: Rune is pre-release, so a revision of its `dev` branch is pinned (that branch is never rewritten).
+rune = { git = "https://github.com/anomalyco/rune", rev = "d9b45a57c178f4bd95d3b1d9c51b99646024eb0c", features = ["native-file-dialog"] }
+rune-kit = { git = "https://github.com/anomalyco/rune", rev = "d9b45a57c178f4bd95d3b1d9c51b99646024eb0c" }
+# Materials drawn by shaders: the gilded frame, the brass plaque, the glass plates.
+rune-fx = { git = "https://github.com/anomalyco/rune", rev = "d9b45a57c178f4bd95d3b1d9c51b99646024eb0c" }
+# Only for the types the compositor hook names (the device and texture formats Rune hands over).
+wgpu = { version = "30", default-features = false, features = ["std", "parking_lot", "wgsl"] }
+
+serde = { version = "1", features = ["derive"] }
+# preserve_order: manifest.json is rewritten in place when paintings are downloaded,
+# so key order must survive a round trip.
+serde_json = { version = "1", features = ["preserve_order"] }
+tokio = { version = "1", features = ["time", "sync", "macros", "rt", "rt-multi-thread"] }
+notify = "8"
+notify-debouncer-full = "0.5"
+# Native TLS: Security.framework on macOS, SChannel on Windows, OpenSSL on Linux.
+reqwest = { version = "0.12", default-features = false, features = ["json", "native-tls", "charset", "gzip"] }
+# Museum catalogues: NGA publishes open data as CSV, the Rijksmuseum as EDM/XML.
+csv = "1"
+roxmltree = "0.20"
+# Transliterates titles (Cyrillic, Greek, diacritics) into safe file names.
+deunicode = "1"
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp", "tiff"] }
+fast_image_resize = { version = "6", features = ["image"] }
+imagesize = "0.15"
+# Converts scans tagged with a wider colour space (Adobe RGB, ProPhoto, Display P3) to sRGB for the screen.
+moxcms = "0.8"
+fastrand = "2"
+percent-encoding = "2"
+log = "0.4"
+env_logger = "0.11"
+# The QR code on the info plate.
+qrcode = { version = "0.14", default-features = false }
+# Launch at login: a LaunchAgent on macOS, the Run registry key on Windows, an autostart entry on Linux.
+auto-launch = "0.6"
+
+# The menu bar item. Rune's own tray has no macOS backend yet and only flat menus;
+# Galeria's menu has submenus and check marks.
+[target.'cfg(any(target_os = "macos", target_os = "windows"))'.dependencies]
+tray-icon = { version = "0.21", default-features = false }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+wgpu = { version = "30", default-features = false, features = ["metal"] }
+objc2 = "0.6"
+objc2-foundation = "0.3"
+objc2-app-kit = "0.3"
+plist = "1"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+wgpu = { version = "30", default-features = false, features = ["vulkan", "dx12"] }
+windows = { version = "0.62", features = [
+  "Win32_Foundation",
+  "Win32_Graphics_Gdi",
+  "Win32_System_Com",
+  "Win32_System_Registry",
+  "Win32_UI_HiDpi",
+  "Win32_UI_Shell",
+  "Win32_UI_WindowsAndMessaging",
+] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+wgpu = { version = "30", default-features = false, features = ["vulkan"] }
+# Desktop-type window hints on X11 (pure Rust, no GTK).
+x11rb = { version = "0.13", features = ["randr"] }
+
+# Rune builds against wgpu-hal with a small patch, and a dependency's own [patch] does not
+# reach the crate that depends on it, so it is repeated here.
+[patch.crates-io]
+wgpu-hal = { git = "https://github.com/anomalyco/rune", rev = "d9b45a57c178f4bd95d3b1d9c51b99646024eb0c" }
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = 3
+strip = true
+
+# Dependencies are optimized in dev builds too: decoding and resizing 40-megapixel
+# scans, and the renderer itself, are painfully slow otherwise.
+[profile.dev.package."*"]
+opt-level = 3

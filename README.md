@@ -7,7 +7,7 @@ Galeria turns a folder of high-resolution painting scans into a museum on your d
 - **Live desktop.** The painting is drawn in a window that sits behind your desktop icons, the same technique [Plash](https://github.com/sindresorhus/Plash) uses. It can also set the real system wallpaper, so Mission Control, Spaces and the lock screen match.
 - **Fitted to every display.** Galeria compares each painting's aspect ratio with the display's. Works close to the screen's shape fill it edge to edge. Unusually wide or tall works slowly pan from one edge to the other so you see the whole canvas over time, or they hang on a gallery wall (tinted to the painting, blurred, or a colour of your choice) with an optional gilded, walnut, black or white frame.
 - **Museum info plate.** Title, artist, nationality and life dates, date, medium, dimensions, description, collection and credit line, accession number, image credit, license, and an optional QR code to the museum page. You can hide the plate, snap it to a corner, or drag it anywhere on the desktop.
-- **Plate styles.** Museum Plastic, Liquid Glass, Smoked Glass, Brass Plaque, Paper Card, Black Acrylic and Minimal are built in. You can add your own as plain CSS files, and they hot-reload.
+- **Plate styles.** Museum Plastic, Liquid Glass, Smoked Glass, Brass Plaque, Paper Card, Black Acrylic and Minimal are built in. The glass, brass, acrylic and paper surfaces and the gilded and lacquered frames are drawn by GPU shaders. You can add your own styles as small JSON files, and they reload when you save.
 - **Full-screen viewer.** A distraction-free mode where the mouse reveals the painting: move left/right (or up/down) to travel edge to edge, scroll or pinch to zoom up to past 1:1, and use the minimap to see where you are.
 - **Menu bar app.** Every option lives in the menu bar: painting, rotation, fit, panning, wall, frame and plate. There's no Dock icon unless you turn it on.
 - **Nothing bundled.** Galeria stores only the location of your art folder. It reads `manifest.json` from that folder, checks that every file it lists exists and is a readable image, and watches the folder for changes. The paintings are never copied or shipped with the app.
@@ -16,25 +16,28 @@ Galeria turns a folder of high-resolution painting scans into a museum on your d
 - **Show everything, or a group.** Rotate through the whole library, your favorites, a playlist, chosen museums and genres, or a hand-picked selection. Museums can be switched off without deleting anything.
 - **Light and dark.** Galeria measures how bright each painting is and can show brighter paintings in Light Mode and darker ones in Dark Mode.
 
-![Desktop: Degas, *Before the Ballet*, hung in a gilded frame on a wall tinted to the painting](docs/desktop.jpg)
-![Viewer: moving the mouse reveals a 2.6:1 panorama edge to edge](docs/viewer.jpg)
-![Settings: every plate style rendered live](docs/settings.jpg)
-![Discover: Rijksmuseum results, with the license decision for the selected painting](docs/discover.jpg)
+![Desktop: Vermeer, *Young Woman with a Water Pitcher*, hung in a gilded frame on a wall tinted to the painting](docs/desktop.jpg)
+![Viewer: the left end of a wide overdoor painting; moving the mouse travels to the other end](docs/viewer.jpg)
+![Settings: every plate style drawn live over the current painting](docs/settings.jpg)
+![Discover: Cleveland Museum of Art results for "Monet", with the details of the selected painting](docs/discover.jpg)
+
+The pictures above are the app's own windows rendered offscreen with `galeria ui --snap` (see [Command line](#command-line)).
 
 ## Building
 
-Requirements: Rust (the pinned toolchain in `rust-toolchain.toml` installs itself via rustup), Node 20+, and the [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/) for your OS.
+Requirements: Rust. The pinned toolchain in `rust-toolchain.toml` installs itself via rustup. There is no Node, web view or bundler step.
 
 ```sh
-npm install
-npm run tauri dev        # run in development
-npm run app              # build Galeria.app (macOS) → src-tauri/target/release/bundle/macos/
-npm run tauri build      # installers for the current platform (.dmg / .msi / .deb / .AppImage …)
+cargo run                        # run in development
+cargo test                       # the tests (the live museum API tests are ignored by default)
+packaging/macos/bundle.sh        # release build → target/bundle/Galeria.app (macOS)
+packaging/macos/dmg.sh           # the disk image to hand out → target/bundle/Galeria-<version>.dmg
+cargo build --release            # a bare binary on Windows and Linux
 ```
 
-Run the Rust tests with `cd src-tauri && cargo test`.
+`packaging/macos/bundle.sh` only assembles and signs the bundle (ad hoc, or with `GALERIA_SIGN="Developer ID Application: …"`). It does not install or start it. `packaging/macos/dmg.sh` wraps it in a disk image (it needs python3, and installs `dmgbuild` into `target/dmg-venv` the first time). There are no Windows or Linux installers yet, and the macOS app is not notarized. On Linux the build needs the OpenSSL development headers.
 
-On first launch Galeria asks for your art folder. You can also set it up front with `GALERIA_LIBRARY=/path/to/folder`.
+The first launch walks you through it: what Galeria does, where to keep the paintings (it suggests `~/Pictures/Galeria` and starts an empty `manifest.json` there), and a first set to download from a museum. You can also set the folder up front with `GALERIA_LIBRARY=/path/to/folder`.
 
 ## Using it
 
@@ -73,17 +76,27 @@ When Galeria is already running, launching it again with a flag controls the run
 | --- | --- |
 | `--next`, `--prev` | change the painting on every display |
 | `--show <id>` | show one painting now, by its manifest id (e.g. `nga:100922`) |
-| `--viewer` | open the full-screen viewer |
+| `--viewer`, `--close-viewer` | open / close the full-screen viewer |
 | `--settings [section]` | open settings (`now`, `browse`, `discover`, `sources`, `rotation`, `wallpaper`, `plate`, `library`, `general`) |
 | `--toggle-plate`, `--toggle-panning` | |
 | `--arrange`, `--done` | enter / leave plate-arranging mode |
 | `--menu <id>` | trigger any menu item, e.g. `--menu style:glass`, `--menu fit:pan`, `--menu speed:10`, `--menu interval:60`, `--menu scope:favorites`, `--menu scope-genre:seascape`, `--menu match-appearance` |
 | `--theme light\|dark\|auto` | pretend the system is in that appearance (to try light/dark matching) |
-| `--capture <dir>` | write PNG snapshots of every Galeria window (macOS, debugging) |
-| `--ui <action>` | drive the settings window without a mouse: `click:<css selector>`, `type:<selector>=<text>`, `key:<selector>=Enter` (testing) |
-| `--debug` | every window logs its render state, and the core logs what is showing and why |
+| `--debug` | the core logs what is showing and why |
+| `--quit` | quit the running app |
 
-Set `GALERIA_HOME=/some/folder` to keep settings, state and caches in a folder of your choosing instead of the system locations. It is handy for trying things against a copy of your library.
+Set `GALERIA_HOME=/some/folder` to keep settings, state and caches in a folder of your choosing instead of the system locations. It is handy for trying things against a copy of your library. A run with `GALERIA_HOME` set never changes what launches at login.
+
+`galeria ui` renders the windows offscreen, without opening any, for screenshots and debugging:
+
+```sh
+galeria ui --list-windows                                   # settings, wall, viewer
+galeria ui --window wall --list-scenes                      # gilded, pan, brass, arrange, …
+galeria ui --window wall --scene gilded --snap out.png --size 1600x1000
+galeria ui --window settings --scene plate --theme light --snap plate.png
+```
+
+`GALERIA_UI_PAINTING=<id>` picks the painting. Without `GALERIA_HOME` it works on a private copy of your settings and never writes to the real ones. `galeria ui --help` lists the rest (frame dumps, video, scripted input).
 
 ## Choosing what is shown
 
@@ -99,7 +112,7 @@ Set `GALERIA_HOME=/some/folder` to keep settings, state and caches in a folder o
 
 Two things always apply on top. Paintings you marked *Never Show* stay hidden, and so do museums switched off in the **Museums** tab (nothing is deleted; switch them back on any time). If a choice leaves nothing to show, Galeria shows everything rather than a blank desktop, and says so.
 
-**Genres** come from the manifest's `tags`, `kind` and `category`, plus keywords in the title. The list (Landscape, Seascape & Marine, Rivers & Lakes, Cityscape & Architecture, Winter, Night & Sunset, Gardens & Flowers, Still Life, Figures & Everyday Life, Portrait, Religious, Orthodox & Icons, Mythology & History, Animals, East Asian) lives in [`src-tauri/resources/genres.json`](src-tauri/resources/genres.json).
+**Genres** come from the manifest's `tags`, `kind` and `category`, plus keywords in the title. The list (Landscape, Seascape & Marine, Rivers & Lakes, Cityscape & Architecture, Winter, Night & Sunset, Gardens & Flowers, Still Life, Figures & Everyday Life, Portrait, Religious, Orthodox & Icons, Mythology & History, Animals, East Asian) lives in [`resources/genres.json`](resources/genres.json).
 
 ### Light and dark
 
@@ -115,7 +128,7 @@ The **Discover** tab searches a museum, shows thumbnails with the image size and
 
 Galeria downloads an image only when its rights holder has put it in the public domain or under a license that lets anyone use it freely: **CC0, Public Domain Mark, CC BY or CC BY-SA**. NonCommercial and NoDerivatives licenses, "in copyright" statements, and anything it does not recognise are refused.
 
-The rules are data, in [`src-tauri/resources/licensing.json`](src-tauri/resources/licensing.json), compiled into the app and shown in the **Museums** tab. For each source they name the field of the museum's own record that proves a work is open:
+The rules are data, in [`resources/licensing.json`](resources/licensing.json), compiled into the app and shown in the **Museums** tab. For each source they name the field of the museum's own record that proves a work is open:
 
 | Source | Programme | Proof Galeria checks on every record |
 | --- | --- | --- |
@@ -126,7 +139,7 @@ The rules are data, in [`src-tauri/resources/licensing.json`](src-tauri/resource
 | Art Institute of Chicago | Open Access, CC0 | `is_public_domain = true` |
 | Wikimedia Commons | per file | the file's own license, matched against the accepted list |
 
-A download never trusts what the settings window sends. The Rust side reads the record again from the museum, evaluates the rule again, and only then fetches the image. The license, its URL, the evidence (for example `share_license_status = CC0`) and the date of the check are written into the manifest entry.
+A download never trusts the search result it was picked from. The record is read again from the museum, the rule is evaluated again, and only then is the image fetched. The license, its URL, the evidence (for example `share_license_status = CC0`) and the date of the check are written into the manifest entry.
 
 Museums without an open-access programme (the Louvre, the Musée d'Orsay, the Prado, the Uffizi, the Kunsthistorisches Museum, the Tretyakov Gallery and others) are listed in the same file with what their terms say. Galeria never downloads from them. Their works are offered only as Wikimedia Commons files whose own license passes. Photographs under CC BY or CC BY-SA require credit, so for those the plate always shows the photographer and license, even when the credit line is switched off.
 
@@ -134,13 +147,13 @@ The rules were reviewed on the date in the file. Museums say they release only w
 
 ### What Galeria changes in your folder
 
-Galeria writes to the art folder only when you download something, or when you ask it to remove manifest entries whose files are gone. It adds the image file and appends one entry to `manifest.json`. Existing entries, key order and indentation are left exactly as they were. The file is re-read just before writing and replaced atomically, and a copy of the previous manifest is kept in the app data folder (`manifest-backups/`, the last eight). If another tool later rewrites the manifest without Galeria's entries, Galeria lists its downloads again as long as the files are still there.
+Galeria writes to the art folder only when you download something, when you ask it to remove manifest entries whose files are gone, or to start an empty `manifest.json` in a folder that has none (it never replaces one). It adds the image file and appends one entry to `manifest.json`. Existing entries, key order and indentation are left exactly as they were. The file is re-read just before writing and replaced atomically, and a copy of the previous manifest is kept in the app data folder (`manifest-backups/`, the last eight). If another tool later rewrites the manifest without Galeria's entries, Galeria lists its downloads again as long as the files are still there.
 
 The National Gallery of Art has no search API. The first time you open it in Discover, Galeria downloads the Gallery's open dataset once, keeps a small index of the open-access paintings in the cache folder and searches that locally.
 
 ## The art folder
 
-The folder must contain `manifest.json` next to the images. The manifest can be a bare array, `{ "items": [...] }`, `{ "paintings": [...] }` or `{ "artworks": [...] }`. Only `file` is required; it must be a path relative to the folder, and subfolders are fine.
+The folder holds `manifest.json` next to the images. Galeria creates an empty one during the first run, or from **Library → Create manifest.json** for a folder that has none; you can also write your own. The manifest can be a bare array, `{ "items": [...] }`, `{ "paintings": [...] }` or `{ "artworks": [...] }`. Only `file` is required; it must be a path relative to the folder, and subfolders are fine.
 
 ```jsonc
 {
@@ -176,15 +189,26 @@ Validation runs on every change. The Library tab and the menu show which entries
 
 ## Custom plate styles
 
-**Info Plate → New Custom Style** creates a documented CSS file in the styles folder and opens it. On macOS that folder is `~/Library/Application Support/com.nikolovlazar.galeria/plate-styles/`. Saving the file updates every display immediately. The file name is the style id:
+**Info Plate → New Custom Style** creates a documented JSON file in the styles folder and opens it. On macOS that folder is `~/Library/Application Support/com.nikolovlazar.galeria/plate-styles/`. Saving the file updates every display immediately. The file name is the style id. A style names a built-in to start from and lists what it changes; lines starting with `//` are comments:
 
-```css
-/* name: Neon Night */
-.plate[data-style="neon-night"] { background: rgba(8, 10, 24, .78); color: #e8fbff; border-radius: .8em; }
-.plate[data-style="neon-night"] .plate-title { color: #ff5ec8; }
+```jsonc
+// neon-night.json
+{
+  "name": "Neon Night",
+  "base": "minimal",
+  "ink": "#e8fbff",
+  "background": "#080a18c7",
+  "radius": 0.8,
+  "border": { "width": 1, "color": "#3ef2ff" },
+  "glow": { "blur": 1.4, "color": "#3ef2ff8c" },
+  "title": { "color": "#ff5ec8", "weight": 700 },
+  "artist": { "color": "#3ef2ff", "uppercase": true, "tracking": 0.12 }
+}
 ```
 
-Available elements: `.plate-body`, `.plate-heading` (`.plate-title`, `.plate-date`), `.plate-original-title`, `.plate-artist`, `.plate-bio`, `.plate-meta` (`.plate-medium`, `.plate-dimensions`), `.plate-description`, `.plate-footer` (`.plate-museum`, `.plate-credit-line`, `.plate-accession`, `.plate-credit`, `.plate-license`, `.plate-text-credit`) and `.plate-qr`. Use `em` units so the size setting scales your style. See [`examples/plate-styles/`](examples/plate-styles/).
+The plate: `base`, `ink`, `font`, `background` (a colour, a list of colours for a gradient with `angle`, or `"none"`), `frost`, `radius`, `padding`, `border`, `shadow`, `glow`, `textShadow`, `align`, and `material` (`gilt`, `brass`, `acrylic`, `glass`, `smoked`, `paper`: a shader-drawn surface). Each line of the label (`title`, `date`, `originalTitle`, `artist`, `bio`, `meta`, `description`, `footer`) takes `color`, `size`, `weight`, `italic`, `uppercase`, `tracking`, `opacity` and `lineHeight`. Sizes are in em, so the size setting scales your style. A file that is not valid JSON is listed in Settings with what is wrong. See [`examples/plate-styles/`](examples/plate-styles/).
+
+Styles written as CSS for earlier versions are not read; they have to be rewritten in this format.
 
 ## Online lookups
 
@@ -203,12 +227,14 @@ The cache lives in `enrichment.json` in the app data folder. Values from your ma
 
 | | Live desktop | System wallpaper | Status |
 | --- | --- | --- | --- |
-| **macOS** | NSWindow at `kCGDesktopWindowLevel`, on all Spaces | `NSWorkspace.setDesktopImageURL` (per display, fit/fill + fill colour) | daily driver |
-| **Windows** | WebView parented to the desktop `WorkerW` (behind the icons) | `IDesktopWallpaper` (per monitor) | compiles; not yet tested on hardware |
-| **Linux / X11** | `_NET_WM_WINDOW_TYPE_DESKTOP`, kept below and sticky | GNOME, Cinnamon, MATE, KDE, XFCE, sway, Hyprland (`swww`/`hyprpaper`), or `feh` | compiles; not yet tested on hardware |
+| **macOS** | NSWindow at `kCGDesktopWindowLevel`, on all Spaces | `NSWorkspace.setDesktopImageURL` (per display, fit/fill + fill colour) | runs; the only platform tried so far |
+| **Windows** | window parented to the desktop `WorkerW` (behind the icons) | `IDesktopWallpaper` (per monitor) | type-checks; never run |
+| **Linux / X11** | `_NET_WM_WINDOW_TYPE_DESKTOP`, kept below and sticky | GNOME, Cinnamon, MATE, KDE, XFCE, sway, Hyprland (`swww`/`hyprpaper`), or `feh` | type-checks; never run |
 | **Linux / Wayland** | not possible without layer-shell, so live mode turns off | as above | |
 
 On macOS, `NSWorkspace` only changes the wallpaper of the current Space. The live desktop window shows on every Space regardless.
+
+The menu bar item uses the system's own menus on macOS and Windows. On Linux it is a flat menu without submenus.
 
 ## Where things are stored
 
@@ -222,13 +248,14 @@ On macOS, `NSWorkspace` only changes the wallpaper of the current Space. The liv
 
 ## How it's built
 
-[Tauri 2](https://v2.tauri.app). The backend is Rust and the windows are system webviews (WebKit on macOS and Linux, WebView2 on Windows).
+Rust throughout. The windows are drawn on the GPU by [Rune](https://github.com/anomalyco/rune), a native UI framework (no web view); the frames and plate materials are shaders written with `rune-fx`. Rune is pinned to a git revision in `Cargo.toml`.
 
 ```
-src-tauri/src/
+src/
   core.rs       state, rotation, assignments, system-wallpaper sync, enrichment worker
+  host.rs       the seam between the core and the windows (the `Shell` trait), the async runtime
   library.rs    manifest parsing + validation
-  images.rs     galeria:// protocol: originals, display-sized renditions, thumbnails (cached)
+  images.rs     display-sized renditions and thumbnails (cached), colour management
   enrich.rs     museum APIs / Wikidata / Wikipedia
   licensing.rs  the download rules (resources/licensing.json) and the license decision
   sources/      one provider per museum: search, license evidence, image address
@@ -236,18 +263,26 @@ src-tauri/src/
   manifest.rs   appends to manifest.json without disturbing it
   genres.rs     genre list (resources/genres.json) and classification
   tone.rs       brightness measurement and light/dark
-  wall.rs       wallpaper, viewer and settings windows
-  tray.rs       menu bar item
-  platform/     macOS, Windows, Linux desktop-window + wallpaper glue
+  styles.rs     custom plate styles (JSON files)
+  menu.rs       the menu bar item's contents, independent of any toolkit
+  actions.rs    what the windows and the menu can ask the core to do
+  instance.rs   one running instance; later launches forward their flags to it
   cli.rs        command-line control
-src/
-  shared/       layout math, plate renderer, plate styles, stage (crossfades + pan animation)
-  wallpaper/    the desktop window
-  viewer/       the full-screen viewer
-  settings/     the settings window (React)
+  platform/     macOS, Windows, Linux desktop-window + wallpaper glue
+  shell/        the Rune app: windows, menu bar item, `galeria ui`
+  ui/
+    installer.rs  the picture behind the installer window (packaging/macos/dmg.sh)
+    stage.rs      layout math and the pan
+    plate.rs      plate styles, the label, placement and snapping
+    fx.rs         shader materials: gilt, lacquer, brass, acrylic, glass, paper grain
+    wallpaper.rs  the desktop window
+    viewer.rs     the full-screen viewer
+    settings/     the settings window, one file per page, and the first run (onboarding.rs)
 ```
 
-The slow pan moves the painting one device pixel at a time and sleeps in between (at most 30 updates a second, none while resting at an edge or paused). An infinite CSS animation looks the same but keeps WebKit busy every frame. The pan's phase is tied to when the painting appeared, so restarting the app doesn't send it back to the edge.
+The slow pan moves the painting one device pixel at a time and sleeps in between (at most 30 updates a second, none while resting at an edge or paused), so an idle desktop draws nothing. The pan's phase is tied to when the painting appeared, so restarting the app doesn't send it back to the edge.
+
+Set `GALERIA_FX=0` to draw the frames and plates with plain gradients instead of shaders.
 
 ## License
 
