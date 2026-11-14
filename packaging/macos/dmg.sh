@@ -17,16 +17,20 @@ cd "$root"
 
 packaging/macos/bundle.sh
 version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
-dmg="target/bundle/Galeria-$version.dmg"
+dmg="${GALERIA_DMG_OUT:-target/bundle/Galeria-$version.dmg}"
+mkdir -p "$(dirname "$dmg")"
 work=$(mktemp -d "${TMPDIR:-/tmp}/galeria-dmg.XXXXXX")
 trap 'rm -rf "$work"' EXIT
 
 # The background, at 1x and 2x in one file, so it is sharp on any display.
 bin="${CARGO_TARGET_DIR:-target}/release/galeria"
 for scale in 1 2; do
-  GALERIA_HOME="$work/home" "$bin" ui --window installer --scale "$scale" \
-    --snap "$work/background-$scale.png" >/dev/null 2>&1
-  [ -s "$work/background-$scale.png" ] || { echo "could not draw the background" >&2; exit 1; }
+  if ! GALERIA_HOME="$work/home" "$bin" ui --window installer --scale "$scale" \
+    --snap "$work/background-$scale.png" >"$work/snap.log" 2>&1 || [ ! -s "$work/background-$scale.png" ]; then
+    echo "could not draw the installer background (scale $scale):" >&2
+    cat "$work/snap.log" >&2
+    exit 1
+  fi
 done
 tiffutil -cathidpicheck "$work/background-1.png" "$work/background-2.png" \
   -out "$work/background.tiff" >/dev/null 2>&1
@@ -44,8 +48,8 @@ rm -f "$dmg"
   "Galeria" "$dmg" >/dev/null
 hdiutil verify -quiet "$dmg"
 
-if [ -n "${GALERIA_SIGN:-}" ]; then
-  codesign --force --sign "$GALERIA_SIGN" "$dmg"
+if [ -n "${GALERIA_SIGN:-}" ] && [ "${GALERIA_SIGN}" != "-" ]; then
+  codesign --force --timestamp --sign "$GALERIA_SIGN" "$dmg"
 fi
 
 echo "$dmg ($(du -h "$dmg" | cut -f1))"

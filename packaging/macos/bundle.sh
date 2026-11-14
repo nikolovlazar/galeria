@@ -52,9 +52,13 @@ PLIST
 /usr/libexec/PlistBuddy -c "Merge packaging/macos/Info.plist" "$plist" >/dev/null
 plutil -lint "$plist" >/dev/null
 
-# Ad hoc unless an identity is given. macOS treats each ad hoc build as a new app,
-# so it asks again for anything it had granted the previous one.
-codesign --force --sign "${GALERIA_SIGN:--}" "$app"
+# Ad hoc unless an identity is given. With a Developer ID, enable Hardened Runtime
+# and secure timestamps so the bundle can be notarized.
+if [ -n "${GALERIA_SIGN:-}" ] && [ "${GALERIA_SIGN}" != "-" ]; then
+  codesign --force --options runtime --timestamp --sign "$GALERIA_SIGN" "$app"
+else
+  codesign --force --sign - "$app"
+fi
 codesign --verify --strict "$app"
 
 echo "$app ($version, $(du -sh "$app" | cut -f1))"
