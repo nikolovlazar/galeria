@@ -125,33 +125,15 @@ pub fn compute(
     }
 }
 
-/// CSS `ease-in-out` = cubic-bezier(0.42, 0, 0.58, 1).
-fn ease_in_out(x: f64) -> f64 {
-    let (x1, x2) = (0.42, 0.58);
-    let bx = |s: f64| 3.0 * x1 * s * (1.0 - s).powi(2) + 3.0 * x2 * s * s * (1.0 - s) + s.powi(3);
-    let by = |s: f64| 3.0 * s * s * (1.0 - s) + s.powi(3);
-    let (mut lo, mut hi, mut s) = (0.0, 1.0, x);
-    for _ in 0..24 {
-        let v = bx(s) - x;
-        if v.abs() < 1e-6 {
-            break;
-        }
-        if v > 0.0 {
-            hi = s;
-        } else {
-            lo = s;
-        }
-        s = (lo + hi) / 2.0;
-    }
-    by(s)
-}
-
 /// Slow edge-to-edge ping-pong pan: rest, glide, rest, glide back.
 ///
 /// The timeline is a function of wall-clock time since the painting appeared,
-/// so restarting Galeria doesn't send the painting back to the edge. The window
-/// moves the painting one device pixel at a time and sleeps in between: a few
-/// cheap frames per second, and none at all while resting or paused.
+/// so restarting Galeria doesn't send the painting back to the edge. The glide
+/// moves at a constant `speed` points per second — never eased, so a work with
+/// far more off-screen width or height crosses at the same on-screen speed as a
+/// narrow one, for as long as it takes. The window moves the painting one device
+/// pixel at a time and sleeps in between: a few cheap frames per second, and none
+/// at all while resting or paused.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Pan {
     pub travel: f64,
@@ -176,6 +158,7 @@ impl Pan {
     }
 
     /// Offset in points (≤ 0) along the pan axis, `t` seconds into the timeline.
+    /// Linear in both glides: the speed is `travel / travel_secs` = `speed`.
     pub fn offset_at(&self, t: f64) -> f64 {
         let cycle = self.cycle_secs();
         let c = t.rem_euclid(cycle);
@@ -184,11 +167,11 @@ impl Pan {
         if c < p {
             0.0
         } else if c < p + m {
-            end * ease_in_out((c - p) / m)
+            end * ((c - p) / m)
         } else if c < 2.0 * p + m {
             end
         } else {
-            end * (1.0 - ease_in_out((c - 2.0 * p - m) / m))
+            end * (1.0 - (c - 2.0 * p - m) / m)
         }
     }
 
@@ -198,26 +181,21 @@ impl Pan {
         t.rem_euclid(cycle) / cycle
     }
 
-    /// Seconds until the painting should next move, at most one device pixel
-    /// later (and no more often than 30 times a second).
+    /// Seconds until the painting should next move: one device pixel later while
+    /// gliding (never past the next edge), and no more often than 30 times a second.
     pub fn next_step(&self, t: f64, scale: f64) -> f64 {
         const MIN_STEP: f64 = 0.033;
-        let probe = 0.2;
-        let v = (self.offset_at(t + probe) - self.offset_at(t)).abs() / probe; // points per second
-        if v > 0.0 {
-            return (1.0 / (v * scale.max(0.5))).clamp(MIN_STEP, 1.0);
-        }
-        // Resting at an edge: wake up when the glide starts.
-        let c = t.rem_euclid(self.cycle_secs());
+        let cycle = self.cycle_secs();
+        let c = t.rem_euclid(cycle);
         let (p, m) = (self.pause_secs, self.travel_secs);
-        let rest_end = if c < p {
-            p
-        } else if c >= p + m && c < 2.0 * p + m {
-            2.0 * p + m
-        } else {
-            c + 1.0
-        };
-        (rest_end - c).clamp(0.016, 1.0)
+        if c < p || (c >= p + m && c < 2.0 * p + m) {
+            // Resting at an edge: wake up when the glide starts.
+            let rest_end = if c < p { p } else { 2.0 * p + m };
+            return (rest_end - c).clamp(0.016, 1.0);
+        }
+        let pixel = 1.0 / ((self.travel / m) * scale.max(0.5));
+        let next_edge = if c < p + m { p + m } else { cycle };
+        pixel.min(next_edge - c).clamp(MIN_STEP, 1.0)
     }
 }
 
@@ -313,7 +291,20 @@ mod tests {
         // It eases: slower near the edges than in the middle.
         let near_edge = (pan.offset_at(p + 1.0) - pan.offset_at(p)).abs();
         let middle = (pan.offset_at(p + m / 2.0 + 1.0) - pan.offset_at(p + m / 2.0)).abs();
-        assert!(near_edge < middle);
+        assert!(close(near_edge, middle), "no easing: same speed at the edge and in the middle");
+    }
+
+    #[test]
+    fn every_painting_glides_at_the_same_speed() {
+        let w = WallpaperSettings::default();
+        let panorama = compute(6209.0, 2100.0, 2560.0, 1707.0, &w, 0.0);
+        let scroll = compute(24000.0, 3000.0, 2560.0, 1707.0, &w, 0.0);
+        let a = Pan::new(&panorama, 5.0, 60.0).unwrap();
+        let b = Pan::new(&scroll, 5.0, 60.0).unwrap();
+        assert!(b.travel > 4.0 * a.travel, "the scroll has far more to cross");
+        // Ten seconds into the glide, each has moved the same 50 points.
+        let moved = |pan: Pan| (pan.offset_at(pan.pause_secs + 10.0) - pan.offset_at(pan.pause_secs)).abs();
+        assert!(close(moved(a), 50.0) && close(moved(b), 50.0), "{} {}", moved(a), moved(b));
     }
 
     #[test]

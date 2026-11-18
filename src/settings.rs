@@ -192,7 +192,7 @@ impl Default for WallpaperSettings {
             crop_tolerance: 0.1,
             pan: true,
             pan_speed: 5.0,
-            pan_pause: 20.0,
+            pan_pause: 60.0,
             pan_paused: false,
             matte: Matte::Average,
             matte_color: "#1d1c1a".into(),
