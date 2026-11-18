@@ -35,7 +35,9 @@ packaging/macos/dmg.sh           # the disk image to hand out → target/bundle/
 cargo build --release            # a bare binary on Windows and Linux
 ```
 
-`packaging/macos/bundle.sh` only assembles and signs the bundle (ad hoc, or with `GALERIA_SIGN="Developer ID Application: …"`). It does not install or start it. `packaging/macos/dmg.sh` wraps it in a disk image (it needs python3, and installs `dmgbuild` into `target/dmg-venv` the first time). There are no Windows or Linux installers yet, and the macOS app is not notarized. On Linux the build needs the OpenSSL development headers.
+`packaging/macos/bundle.sh` assembles and signs the bundle (ad hoc, or with `GALERIA_SIGN="Developer ID Application: …"`). It does not install or start it. `packaging/macos/dmg.sh` wraps it in a disk image (it needs python3, and installs `dmgbuild` into `target/dmg-venv` the first time). Release builds can be signed with Developer ID and notarized when Apple credentials are configured; Windows installers and Linux packages are also published. On Linux the build needs the OpenSSL development headers.
+
+Galeria checks GitHub Releases for updates and can install them from Settings. See [updates](docs/updates.md) for release signing, packaging and local testing.
 
 The first launch walks you through it: what Galeria does, where to keep the paintings (it suggests `~/Pictures/Galeria` and starts an empty `manifest.json` there), and a first set to download from a museum. You can also set the folder up front with `GALERIA_LIBRARY=/path/to/folder`.
 
@@ -82,6 +84,7 @@ When Galeria is already running, launching it again with a flag controls the run
 | `--arrange`, `--done` | enter / leave plate-arranging mode |
 | `--menu <id>` | trigger any menu item, e.g. `--menu style:glass`, `--menu fit:pan`, `--menu speed:10`, `--menu interval:60`, `--menu scope:favorites`, `--menu scope-genre:seascape`, `--menu match-appearance` |
 | `--theme light\|dark\|auto` | pretend the system is in that appearance (to try light/dark matching) |
+| `--check-update`, `--install-update` | check for an update, or install the one on offer and restart |
 | `--debug` | the core logs what is showing and why |
 | `--quit` | quit the running app |
 

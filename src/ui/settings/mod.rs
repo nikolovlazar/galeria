@@ -320,6 +320,61 @@ pub const SCENES: &[crate::ui::Scene<SettingsUi>] = &[
     ("plate", |s| s.go(Tab::Plate)),
     ("library", |s| s.go(Tab::Library)),
     ("general", |s| s.go(Tab::General)),
+    ("update-available", |s| {
+        s.go(Tab::General);
+        s.onboarding = None;
+        Arc::make_mut(&mut s.snap).update = crate::update::Status {
+            state: crate::update::State::Available {
+                version: "9.9.9".into(),
+                notes: None,
+                page: Some("https://github.com/nikolovlazar/galeria/releases/latest".into()),
+            },
+            current: s.snap.version.into(),
+            can_install: true,
+            hint: None,
+        };
+    }),
+    ("update-downloading", |s| {
+        s.go(Tab::General);
+        s.onboarding = None;
+        Arc::make_mut(&mut s.snap).update = crate::update::Status {
+            state: crate::update::State::Downloading {
+                version: "9.9.9".into(),
+                received: 18_000_000,
+                total: 40_000_000,
+            },
+            current: s.snap.version.into(),
+            can_install: true,
+            hint: None,
+        };
+    }),
+    ("update-failed", |s| {
+        s.go(Tab::General);
+        s.onboarding = None;
+        Arc::make_mut(&mut s.snap).update = crate::update::Status {
+            state: crate::update::State::Failed {
+                error: "Could not check for updates. Please try again.".into(),
+            },
+            current: s.snap.version.into(),
+            can_install: true,
+            hint: None,
+        };
+    }),
+    ("update-up-to-date", |s| {
+        s.go(Tab::General);
+        s.onboarding = None;
+        Arc::make_mut(&mut s.snap).update = crate::update::Status {
+            state: crate::update::State::UpToDate {
+                checked_at: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0),
+            },
+            current: s.snap.version.into(),
+            can_install: true,
+            hint: None,
+        };
+    }),
     ("onboard-welcome", |s| {
         s.onboarding = Some(onboarding::State::default());
     }),

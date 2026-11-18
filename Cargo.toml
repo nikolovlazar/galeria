@@ -21,6 +21,9 @@ serde = { version = "1", features = ["derive"] }
 # preserve_order: manifest.json is rewritten in place when paintings are downloaded,
 # so key order must survive a round trip.
 serde_json = { version = "1", features = ["preserve_order"] }
+sha2 = "0.10"
+ed25519-dalek = "2"
+base64 = "0.22"
 tokio = { version = "1", features = ["time", "sync", "macros", "rt", "rt-multi-thread"] }
 notify = "8"
 notify-debouncer-full = "0.5"
