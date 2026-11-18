@@ -7,6 +7,8 @@
 //!   --viewer                   open the full-screen viewer
 //!   --close-viewer
 //!   --settings [section]       open settings (now, browse, discover, sources, wallpaper, plate, rotation, library, general)
+//!   --check-update             check for updates in Settings
+//!   --install-update           install the available update
 //!   --toggle-plate             show / hide the info plate
 //!   --toggle-panning           pause / resume panning
 //!   --arrange                  drag the plate on the desktop
@@ -55,6 +57,13 @@ pub fn handle(app: &AppHandle, args: &[String]) -> bool {
                     s.open_settings(section);
                 }
             }
+            "--check-update" => {
+                crate::update::check(app, true);
+                if let Some(s) = shell {
+                    s.open_settings(Some("general".into()));
+                }
+            }
+            "--install-update" => crate::update::install(app),
             "--toggle-plate" => {
                 let v = app.core().lock().settings.plate.visible;
                 let _ = core::patch_settings(app, &json!({ "plate": { "visible": !v } }));

@@ -24,6 +24,7 @@ mod sources;
 mod styles;
 mod tone;
 mod ui;
+mod update;
 mod util;
 
 /// The bundle identifier: names the settings, data and cache folders.
@@ -33,6 +34,7 @@ const USAGE: &str = "Galeria: museum-style painting wallpapers.
 
 usage: galeria [flags]      start Galeria, or control the running one
        galeria ui [...]     render its windows without opening them (development)
+       galeria update --check|--apply <zip>  check or apply an update (development)
 
   --next, --prev            change the painting on every display
   --show <id>               show one painting now, by its manifest id
@@ -43,6 +45,8 @@ usage: galeria [flags]      start Galeria, or control the running one
   --arrange, --done         enter or leave plate-arranging mode
   --menu <id>               trigger a menu item, e.g. style:glass, fit:pan, interval:60
   --theme light|dark|auto   pretend the system is in that appearance
+  --check-update            check for updates
+  --install-update          install the available update and restart
   --debug                   log what is showing and why
   --quit
 
@@ -68,6 +72,14 @@ fn main() {
     if args.get(1).map(String::as_str) == Some("ui") {
         if let Err(e) = shell::tooling(args[2..].to_vec()) {
             eprintln!("galeria ui: {e}");
+            std::process::exit(1);
+        }
+        return;
+    }
+    // Updating is independent of the running instance and its command socket.
+    if args.get(1).map(String::as_str) == Some("update") {
+        if let Err(e) = update::cli(&args[2..]) {
+            eprintln!("galeria update: {e}");
             std::process::exit(1);
         }
         return;

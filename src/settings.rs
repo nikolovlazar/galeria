@@ -16,6 +16,7 @@ pub struct Settings {
     pub plate: PlateSettings,
     pub viewer: ViewerSettings,
     pub general: GeneralSettings,
+    pub update: crate::update::Settings,
     /// Painting ids that should never be shown.
     pub excluded: Vec<String>,
     pub favorites: Vec<String>,

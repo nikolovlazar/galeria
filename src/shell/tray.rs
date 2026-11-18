@@ -374,6 +374,19 @@ mod native {
             if let Some(snap) = state.pending.take() {
                 state.tray.set_menu(Some(Box::new(build(&snap))));
                 let _ = state.tray.set_tooltip(Some(menu::tooltip(&snap)));
+                // A quiet alert: the menu bar item says an update is waiting.
+                #[cfg(target_os = "macos")]
+                {
+                    let title = match &snap.update.state {
+                        crate::update::State::Available { version, .. } => {
+                            Some(format!("Update {version}"))
+                        }
+                        crate::update::State::Downloading { .. }
+                        | crate::update::State::Installing { .. } => Some("Updating…".into()),
+                        _ => None,
+                    };
+                    let _ = state.tray.set_title(title);
+                }
             }
         });
     }

@@ -21,6 +21,26 @@ fn percent(v: f64) -> String {
     format!("{}%", (v * 100.0).round())
 }
 
+fn relative_time(timestamp: u64) -> String {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let elapsed = now.saturating_sub(timestamp);
+    if elapsed < 60 {
+        "just now".into()
+    } else if elapsed < 3600 {
+        let n = elapsed / 60;
+        format!("{n} minute{} ago", if n == 1 { "" } else { "s" })
+    } else if elapsed < 86400 {
+        let n = elapsed / 3600;
+        format!("{n} hour{} ago", if n == 1 { "" } else { "s" })
+    } else {
+        let n = elapsed / 86400;
+        format!("{n} day{} ago", if n == 1 { "" } else { "s" })
+    }
+}
+
 pub fn page(s: &SettingsUi, l: &Look, _: &mut Vec<El>) -> El {
     let snap = &s.snap;
     let g = &snap.settings.general;
@@ -139,6 +159,102 @@ pub fn page(s: &SettingsUi, l: &Look, _: &mut Vec<El>) -> El {
         ),
     ];
 
+    let on = snap.settings.update.check_on_launch;
+    let mut update_details = col().w_full().gap(8.0);
+    let status = match &snap.update.state {
+        crate::update::State::Idle => "Use Check Now".into(),
+        crate::update::State::Checking => "Checking…".into(),
+        crate::update::State::UpToDate { checked_at } => {
+            format!("Up to date. Checked {}", relative_time(*checked_at))
+        }
+        crate::update::State::Available { version, .. } => {
+            format!("Version {version} is available")
+        }
+        crate::update::State::Downloading {
+            received, total, ..
+        } => {
+            let percent = if *total == 0 {
+                0
+            } else {
+                ((*received as u128 * 100) / *total as u128).min(100)
+            };
+            format!(
+                "Downloading {percent}% · {} of {}",
+                widgets::bytes(*received),
+                widgets::bytes(*total)
+            )
+        }
+        crate::update::State::Installing { version } => {
+            format!("Installing {version}… Galeria will restart.")
+        }
+        crate::update::State::Failed { .. } => "Update check failed".into(),
+    };
+    // The failed state says it once, in the notice below.
+    if !matches!(snap.update.state, crate::update::State::Failed { .. }) {
+        update_details = update_details.child(widgets::hint(l, status));
+    }
+    if let crate::update::State::Available { version, page, .. } = &snap.update.state {
+        if snap.update.can_install {
+            update_details = update_details.child(widgets::button_if(
+                l,
+                "Install & Restart",
+                Kind::Primary,
+                snap.update.can_install,
+                |s, _| s.cx.run(crate::update::install),
+            ));
+        }
+        if let Some(page) = page.clone() {
+            update_details = update_details.child(widgets::link(l, "What's New", move |_, _| {
+                crate::open::url(&page);
+            }));
+        }
+        let version = version.clone();
+        update_details =
+            update_details.child(widgets::link(l, "Skip This Version", move |s, _| {
+                let version = version.clone();
+                s.cx.run(move |app| crate::update::skip(app, &version));
+            }));
+    }
+    if let crate::update::State::Failed { error } = &snap.update.state {
+        update_details = update_details.child(widgets::notice(l, error.clone(), true));
+    }
+    if !snap.update.can_install {
+        if let Some(hint) = &snap.update.hint {
+            update_details = update_details.child(widgets::hint(l, hint.clone()));
+        }
+        let page = match &snap.update.state {
+            crate::update::State::Available {
+                page: Some(page), ..
+            } => page.clone(),
+            _ => format!("https://github.com/{}/releases/latest", crate::update::REPO),
+        };
+        update_details = update_details.child(widgets::link(l, "Download…", move |_, _| {
+            crate::open::url(&page);
+        }));
+    }
+    update_details = update_details.child(widgets::link(l, "Check Now", |s, _| {
+        s.cx.run(|app| crate::update::check(app, true));
+    }));
+    let updates = vec![
+        widgets::setting(
+            l,
+            "update-on-launch",
+            "Check for updates on launch",
+            None,
+            Some(widgets::toggle(l, on, move |s| {
+                s.cx.patch(json!({"update": {"checkOnLaunch": !on}}));
+            })),
+        ),
+        widgets::setting(
+            l,
+            "update-version",
+            format!("Version {}", snap.version),
+            None,
+            None,
+        ),
+        widgets::block(update_details),
+    ];
+
     let about = vec![
         widgets::block(
             row()
@@ -185,6 +301,7 @@ pub fn page(s: &SettingsUi, l: &Look, _: &mut Vec<El>) -> El {
                 vec![],
                 view,
             ),
+            widgets::section(l, "updates", "Updates", None, vec![], updates),
             widgets::section(l, "about", "About", None, vec![], about),
         ],
     )

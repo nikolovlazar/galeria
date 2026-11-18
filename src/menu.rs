@@ -137,6 +137,15 @@ pub fn signature(s: &Snapshot) -> String {
     if let Some(p) = settings.get_mut("plate") {
         p["positions"] = serde_json::Value::Null;
     }
+    let update = match &s.update.state {
+        crate::update::State::Idle => ("idle", None),
+        crate::update::State::Checking => ("checking", None),
+        crate::update::State::UpToDate { .. } => ("up-to-date", None),
+        crate::update::State::Available { version, .. } => ("available", Some(version)),
+        crate::update::State::Downloading { version, .. } => ("downloading", Some(version)),
+        crate::update::State::Installing { version } => ("installing", Some(version)),
+        crate::update::State::Failed { .. } => ("failed", None),
+    };
     serde_json::json!({
         "d": displays,
         "s": settings,
@@ -149,6 +158,7 @@ pub fn signature(s: &Snapshot) -> String {
         "m": s.museums.iter().map(|m| (&m.name, m.count)).collect::<Vec<_>>(),
         "r": (s.rotation.count, s.rotation.empty),
         "dl": s.downloads.active,
+        "update": (update, s.update.can_install),
     })
     .to_string()
 }
@@ -599,6 +609,21 @@ pub fn build(s: &Snapshot) -> Vec<Node> {
         ),
     ]);
     m.push(submenu("Options", general));
+    match &s.update.state {
+        crate::update::State::Available { version, .. } => m.push(item(
+            "update-install",
+            &format!("Install Update {version}…"),
+            s.update.can_install,
+        )),
+        crate::update::State::Downloading { version, .. }
+        | crate::update::State::Installing { version } => m.push(item(
+            "update-progress",
+            &format!("Updating to {version}…"),
+            false,
+        )),
+        _ => {}
+    }
+    m.push(item("update-check", "Check for Updates…", true));
     m.push(Node::Item {
         id: "settings".into(),
         text: "Settings…".into(),
@@ -636,6 +661,13 @@ pub fn on_menu(app: &AppHandle, id: &str) {
         .unwrap_or((id, None));
     match (head, arg) {
         ("noop", _) => {}
+        ("update-install", _) => crate::update::install(app),
+        ("update-check", _) => {
+            crate::update::check(app, true);
+            if let Some(shell) = app.shell() {
+                shell.open_settings(Some("general".into()));
+            }
+        }
         ("next", None) => core::advance(app, None, true),
         ("prev", None) => core::advance(app, None, false),
         ("next", Some(k)) => core::advance(app, Some(k.to_string()), true),

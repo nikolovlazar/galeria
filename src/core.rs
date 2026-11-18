@@ -319,6 +319,7 @@ pub struct Snapshot {
     pub platform: &'static str,
     pub live_supported: bool,
     pub version: &'static str,
+    pub update: crate::update::Status,
     pub original_wallpapers: usize,
     /// "light" or "dark": the system appearance Galeria currently sees.
     pub theme: Option<&'static str>,
@@ -814,6 +815,7 @@ fn snapshot_of(i: &Inner, paths: &Paths, downloads: (usize, usize, usize)) -> Sn
         platform: platform::PLATFORM,
         live_supported: platform::live_wallpaper_supported(),
         version: env!("CARGO_PKG_VERSION"),
+        update: crate::update::status(),
         original_wallpapers: if paths.wallpaper_backup.exists() {
             i.displays.len()
         } else {
@@ -1208,6 +1210,7 @@ pub fn start(app: &AppHandle) {
     host::spawn(enrich_loop(app.clone()));
     host::spawn(tone_loop(app.clone()));
     host::spawn(download::worker(app.clone()));
+    crate::update::start(app);
 }
 
 // ---------------------------------------------------------------------------
